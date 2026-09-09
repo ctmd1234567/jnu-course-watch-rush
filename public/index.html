@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0a1733">
+  <title>JNU Course Keeper</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="ambient" aria-hidden="true"></div>
+  <header class="hero shell">
+    <nav class="nav">
+      <a class="brand" href="#top" aria-label="JNU Course Keeper 首页">
+        <span class="brand-mark">JK</span>
+        <span>JNU Course Keeper</span>
+      </a>
+      <span class="local-badge"><i></i>仅在本机运行</span>
+    </nav>
+    <div class="hero-card" id="top">
+      <div class="hero-copy">
+        <span class="eyebrow">COURSE AVAILABILITY AUTOMATION</span>
+        <h1>把等待交给程序，<br><em>把选择留给自己。</em></h1>
+        <p>通过可见的 Edge 浏览器和学校页面正常控件，顺序检查多门课程、发现余量并按你的设置完成确认。</p>
+        <div class="hero-actions">
+          <button class="button primary" id="startButton"><span class="play">▶</span>启动任务</button>
+          <button class="button ghost" id="stopButton">停止</button>
+        </div>
+      </div>
+      <div class="hero-status" aria-label="运行状态">
+        <div><span>任务引擎</span><strong id="runtimeStatus">已停止</strong></div>
+        <div><span>登录状态</span><strong id="loginStatus">未知</strong></div>
+        <div><span>活动课程</span><strong id="queueCount">0</strong></div>
+      </div>
+    </div>
+  </header>
+
+  <main class="shell main-grid">
+    <section class="panel add-panel">
+      <div class="section-heading">
+        <div>
+          <span class="section-index">01</span>
+          <h2>添加选课任务</h2>
+        </div>
+        <p>同一课程有多个班时，建议填写教学班号。</p>
+      </div>
+      <form id="courseForm" class="course-form">
+        <label>
+          <span>课程号 <b>*</b></span>
+          <input name="courseNumber" autocomplete="off" placeholder="例如 08060230" required maxlength="32">
+        </label>
+        <label>
+          <span>教学班号 <small>可选</small></span>
+          <input name="teachingClassId" autocomplete="off" placeholder="留空则选择首个可选班" maxlength="40">
+        </label>
+        <fieldset>
+          <legend>模式</legend>
+          <label class="mode-card active">
+            <input type="radio" name="mode" value="watch" checked>
+            <span class="mode-icon">◴</span>
+            <span><strong>蹲课</strong><small>低频、长期运行</small></span>
+          </label>
+          <label class="mode-card rush">
+            <input type="radio" name="mode" value="rush">
+            <span class="mode-icon">↯</span>
+            <span><strong>抢课</strong><small>较短间隔、主动提交</small></span>
+          </label>
+        </fieldset>
+        <label class="rush-time" id="rushTimeField" hidden>
+          <span>抢课启动时间 <b>*</b></span>
+          <input type="datetime-local" name="startAt">
+          <small>建议提前 2–5 分钟启动任务并完成登录，程序到点才开始快速轮转。</small>
+        </label>
+        <button class="button primary add-button" type="submit">＋ 加入任务表</button>
+      </form>
+      <div class="notice">
+        <span>!</span>
+        <p><strong>自动操作说明</strong>两种模式都会在发现可选名额后点击学校页面的“选择”和“确认”。账号、密码、验证码和短信验证始终由你本人完成。</p>
+      </div>
+    </section>
+
+    <section class="panel settings-panel">
+      <div class="section-heading compact">
+        <div><span class="section-index">02</span><h2>频率与确认</h2></div>
+      </div>
+      <form id="settingsForm" class="settings-form">
+        <div class="setting-block">
+          <div class="setting-title"><span class="dot teal"></span><strong>蹲课随机间隔</strong><small>建议 20–30 秒</small></div>
+          <div class="range-pair">
+            <label><span>最短</span><div><input type="number" name="watchMinSeconds" min="15" max="180"><b>秒</b></div></label>
+            <span class="range-line"></span>
+            <label><span>最长</span><div><input type="number" name="watchMaxSeconds" min="15" max="180"><b>秒</b></div></label>
+          </div>
+          <p>允许范围 15–180 秒。每次加入随机抖动，避免严格固定频率。</p>
+        </div>
+        <div class="setting-block">
+          <div class="setting-title"><span class="dot amber"></span><strong>抢课快速轮转</strong><small>到点批量执行</small></div>
+          <div class="range-pair rush-ranges">
+            <label><span>整轮重试</span><div><input type="number" name="rushRoundSeconds" min="2" max="15"><b>秒</b></div></label>
+            <span class="range-line"></span>
+            <label><span>单课动作</span><div><input type="number" name="rushActionGapMs" min="500" max="3000" step="100"><b>ms</b></div></label>
+          </div>
+          <p>建议整轮 2–5 秒、单课 800–1500ms。所有课程快速串行，避免同一登录会话发生并发覆盖。</p>
+        </div>
+        <label class="switch-row">
+          <span><strong>自动点击确认</strong><small>关闭后停在确认弹窗</small></span>
+          <input type="checkbox" name="autoConfirm" checked><i></i>
+        </label>
+        <label class="switch-row">
+          <span><strong>自动选择首个实验班</strong><small>有实验课时存在误选风险，默认关闭</small></span>
+          <input type="checkbox" name="autoPickExperiment"><i></i>
+        </label>
+        <button class="button secondary" type="submit">保存设置</button>
+      </form>
+    </section>
+
+    <section class="panel table-panel full-width">
+      <div class="section-heading table-heading">
+        <div><span class="section-index">03</span><h2>选课任务表</h2></div>
+        <div class="legend"><span><i class="queued"></i>等待</span><span><i class="full"></i>已满</span><span><i class="available"></i>可选</span></div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>课程号</th><th>教学班</th><th>模式</th><th>最新状态</th><th>检查结果</th><th>下次检查</th><th></th></tr></thead>
+          <tbody id="courseRows"></tbody>
+        </table>
+        <div class="empty" id="emptyState">
+          <span class="empty-radar">⌁</span>
+          <strong>任务表还是空的</strong>
+          <p>添加课程后，已选成功的课程会自动移出这里。</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel log-panel full-width">
+      <div class="section-heading compact">
+        <div><span class="section-index">04</span><h2>实时事件</h2></div>
+        <button class="text-button" id="clearLogs">清空显示</button>
+      </div>
+      <div class="logs" id="logs" aria-live="polite"></div>
+    </section>
+  </main>
+
+  <div class="toast" id="toast" role="status"></div>
+  <script src="/app.js" defer></script>
+</body>
+</html>

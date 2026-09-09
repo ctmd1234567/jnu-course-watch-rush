@@ -1,0 +1,9 @@
+node_modules/
+runtime/browser-profile/
+runtime/state.json
+runtime/*.tmp
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

@@ -1,0 +1,20 @@
+{
+  "name": "jnu-course-keeper",
+  "version": "0.1.0",
+  "private": true,
+  "description": "暨南大学选课余量监控与本地自动选课助手",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "check": "node --check src/server.js && node --check src/course-agent.js && node --check src/store.js && node --check public/app.js",
+    "capture-ui": "node scripts/capture-ui.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "playwright-core": "^1.55.0"
+  }
+}
