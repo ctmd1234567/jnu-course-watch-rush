@@ -1,4 +1,6 @@
 node_modules/
+dist/
+.electron-builder-cache/
 runtime/browser-profile/
 runtime/state.json
 runtime/*.tmp

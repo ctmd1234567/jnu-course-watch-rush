@@ -6,7 +6,8 @@ const { CourseAgent } = require('./course-agent');
 
 const ROOT = path.resolve(__dirname, '..');
 const PORT = Number(process.env.PORT || 3210);
-const store = new Store(path.join(ROOT, 'runtime', 'state.json'));
+const RUNTIME_DIR = process.env.JNU_RUNTIME_DIR || path.join(ROOT, 'runtime');
+const store = new Store(path.join(RUNTIME_DIR, 'state.json'));
 const clients = new Set();
 const logs = [];
 
@@ -21,14 +22,30 @@ function broadcast(event, payload) {
 
 const agent = new CourseAgent({
   store,
-  profileDir: path.join(ROOT, 'runtime', 'browser-profile'),
+  profileDir: path.join(RUNTIME_DIR, 'browser-profile'),
   emit: broadcast,
 });
 
 const app = express();
 app.disable('x-powered-by');
+app.use((_request, response, next) => {
+  response.setHeader('Content-Security-Policy', "default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; base-uri 'none'; frame-ancestors 'none'");
+  response.setHeader('X-Content-Type-Options', 'nosniff');
+  response.setHeader('Referrer-Policy', 'no-referrer');
+  next();
+});
 app.use(express.json({ limit: '32kb' }));
 app.use(express.static(path.join(ROOT, 'public')));
+
+app.use('/api', (request, response, next) => {
+  const origin = request.get('origin');
+  if (!origin) return next();
+  try {
+    const url = new URL(origin);
+    if (['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) && url.host === request.get('host')) return next();
+  } catch (_) {}
+  return response.status(403).json({ error: '拒绝来自外部网页的本地控制请求' });
+});
 
 function sendState(response) {
   response.json({ ...agent.publicState(), logs });
@@ -49,7 +66,10 @@ app.get('/api/events', (request, response) => {
 app.post('/api/courses', (request, response) => {
   const courseNumber = String(request.body.courseNumber || '').trim();
   const teachingClassId = String(request.body.teachingClassId || '').trim();
-  const mode = request.body.mode === 'rush' ? 'rush' : 'watch';
+  if (!['watch', 'rush'].includes(request.body.mode)) {
+    return response.status(400).json({ error: '任务模式必须是蹲课或抢课' });
+  }
+  const mode = request.body.mode;
   const startAtInput = String(request.body.startAt || '').trim();
   const startAt = mode === 'rush' && startAtInput ? new Date(startAtInput) : null;
   if (!/^[A-Za-z0-9_-]{3,32}$/.test(courseNumber)) {
@@ -58,13 +78,14 @@ app.post('/api/courses', (request, response) => {
   if (teachingClassId && !/^[A-Za-z0-9_-]{3,40}$/.test(teachingClassId)) {
     return response.status(400).json({ error: '教学班号格式不正确' });
   }
+  if (mode === 'rush' && !teachingClassId) {
+    return response.status(400).json({ error: '抢课任务必须同时填写课程号和教学班号' });
+  }
   if (mode === 'rush' && (!startAt || Number.isNaN(startAt.getTime()))) {
     return response.status(400).json({ error: '抢课任务必须设置有效的启动时间' });
   }
-  const duplicate = store.state.courses.some(item => item.courseNumber === courseNumber && item.teachingClassId === teachingClassId);
-  if (duplicate) return response.status(409).json({ error: '该课程任务已经存在' });
   const scheduled = mode === 'rush' && startAt.getTime() > Date.now();
-  store.state.courses.push({
+  const task = {
     id: crypto.randomUUID(),
     courseNumber,
     teachingClassId,
@@ -75,8 +96,15 @@ app.post('/api/courses', (request, response) => {
     nextCheckAt: startAt ? startAt.getTime() : 0,
     lastResult: null,
     lastError: null,
-  });
-  store.save();
+  };
+  store.state.courses.push(task);
+  try {
+    store.save();
+  } catch (error) {
+    const index = store.state.courses.findIndex(item => item.id === task.id);
+    if (index >= 0) store.state.courses.splice(index, 1);
+    throw error;
+  }
   broadcast('state', agent.publicState());
   sendState(response);
 });
@@ -93,24 +121,16 @@ app.delete('/api/courses/:id', (request, response) => {
 app.patch('/api/settings', (request, response) => {
   const watchMinSeconds = Number(request.body.watchMinSeconds);
   const watchMaxSeconds = Number(request.body.watchMaxSeconds);
-  const rushRoundSeconds = Number(request.body.rushRoundSeconds);
-  const rushActionGapMs = Number(request.body.rushActionGapMs);
+  const rushActionGapMs = Math.max(0, Number(request.body.rushActionGapMs) || 0);
   if (!Number.isFinite(watchMinSeconds) || watchMinSeconds < 15 || watchMinSeconds > 180) {
     return response.status(400).json({ error: '蹲课最短间隔必须为 15–180 秒' });
   }
   if (!Number.isFinite(watchMaxSeconds) || watchMaxSeconds < watchMinSeconds || watchMaxSeconds > 180) {
     return response.status(400).json({ error: '蹲课最长间隔必须不小于最短间隔，且不超过 180 秒' });
   }
-  if (!Number.isFinite(rushRoundSeconds) || rushRoundSeconds < 2 || rushRoundSeconds > 15) {
-    return response.status(400).json({ error: '抢课整轮间隔必须为 2–15 秒' });
-  }
-  if (!Number.isFinite(rushActionGapMs) || rushActionGapMs < 500 || rushActionGapMs > 3000) {
-    return response.status(400).json({ error: '抢课单课动作间隔必须为 500–3000 毫秒' });
-  }
   store.state.settings = {
     watchMinSeconds,
     watchMaxSeconds,
-    rushRoundSeconds,
     rushActionGapMs,
     autoConfirm: request.body.autoConfirm !== false,
     autoPickExperiment: request.body.autoPickExperiment === true,
@@ -143,17 +163,47 @@ app.use((error, _request, response, _next) => {
   response.status(500).json({ error: error.message || '服务器错误' });
 });
 
-const server = app.listen(PORT, '127.0.0.1', () => {
-  console.log(`JNU Course Keeper: http://127.0.0.1:${PORT}`);
-  console.log('仅监听本机；打开页面后添加课程并点击“启动任务”。');
-});
+let server = null;
 
-async function shutdown() {
-  console.log('\n正在停止...');
-  await agent.stop().catch(() => {});
-  server.close(() => process.exit(0));
-  setTimeout(() => process.exit(1), 5_000).unref();
+function startServer(port = PORT) {
+  if (server) return Promise.resolve({ server, port: server.address().port, agent, shutdown });
+  return new Promise((resolve, reject) => {
+    const candidate = app.listen(port, '127.0.0.1');
+    candidate.once('error', reject);
+    candidate.once('listening', () => {
+      server = candidate;
+      const actualPort = server.address().port;
+      console.log(`JNU Course Watch & Rush: http://127.0.0.1:${actualPort}`);
+      console.log('仅监听本机；打开页面后添加课程并点击“启动任务”。');
+      resolve({ server, port: actualPort, agent, shutdown });
+    });
+  });
 }
 
-process.on('SIGINT', shutdown);
-process.on('SIGTERM', shutdown);
+async function shutdown({ exit = false } = {}) {
+  if (!server && !agent.runtime.running) return;
+  console.log('\n正在停止...');
+  await agent.stop().catch(() => {});
+  for (const client of clients) client.end();
+  clients.clear();
+  if (server) {
+    const closingServer = server;
+    closingServer.closeIdleConnections?.();
+    const closed = new Promise(resolve => closingServer.close(resolve));
+    closingServer.closeAllConnections?.();
+    await Promise.race([closed, new Promise(resolve => setTimeout(resolve, 2_000))]);
+    server = null;
+  }
+  if (exit) process.exit(0);
+}
+
+if (require.main === module) {
+  startServer().catch(error => {
+    console.error(error);
+    process.exit(1);
+  });
+  process.on('SIGINT', () => shutdown({ exit: true }));
+  process.on('SIGTERM', () => shutdown({ exit: true }));
+}
+
+module.exports = { startServer, shutdown };

@@ -5,8 +5,7 @@ const DEFAULT_STATE = {
   settings: {
     watchMinSeconds: 20,
     watchMaxSeconds: 30,
-    rushRoundSeconds: 3,
-    rushActionGapMs: 900,
+    rushActionGapMs: 0,
     autoConfirm: true,
     autoPickExperiment: false,
   },
@@ -28,8 +27,15 @@ class Store {
   load() {
     try {
       const saved = JSON.parse(fs.readFileSync(this.filePath, 'utf8'));
+      const savedSettings = saved.settings || {};
       this.state = {
-        settings: { ...DEFAULT_STATE.settings, ...(saved.settings || {}) },
+        settings: {
+          watchMinSeconds: savedSettings.watchMinSeconds ?? DEFAULT_STATE.settings.watchMinSeconds,
+          watchMaxSeconds: savedSettings.watchMaxSeconds ?? DEFAULT_STATE.settings.watchMaxSeconds,
+          rushActionGapMs: Math.max(0, Number(savedSettings.rushActionGapMs) || 0),
+          autoConfirm: savedSettings.autoConfirm ?? DEFAULT_STATE.settings.autoConfirm,
+          autoPickExperiment: savedSettings.autoPickExperiment ?? DEFAULT_STATE.settings.autoPickExperiment,
+        },
         courses: Array.isArray(saved.courses) ? saved.courses : [],
         completed: Array.isArray(saved.completed) ? saved.completed.slice(0, 100) : [],
       };
@@ -48,7 +54,14 @@ class Store {
     fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
     const tempPath = `${this.filePath}.tmp`;
     fs.writeFileSync(tempPath, `${JSON.stringify(this.state, null, 2)}\n`, 'utf8');
-    fs.renameSync(tempPath, this.filePath);
+    try {
+      fs.renameSync(tempPath, this.filePath);
+    } catch (error) {
+      if (error.code !== 'EXDEV') throw error;
+      // 某些 Windows/Electron 环境会把同目录原子替换误判为跨设备移动。
+      fs.copyFileSync(tempPath, this.filePath);
+      fs.unlinkSync(tempPath);
+    }
   }
 
   snapshot() {

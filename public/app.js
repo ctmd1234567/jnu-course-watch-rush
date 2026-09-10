@@ -4,7 +4,7 @@ let localLogs = [];
 
 const statusLabels = {
   queued: '等待检查', scheduled: '等待开抢', checking: '检查中', full: '已满', available: '发现余量',
-  'not-found': '未找到', error: '异常', manual: '需人工', paused: '已暂停', selected: '已选',
+  preheated: '预热完成', 'not-found': '未找到', error: '异常', manual: '需人工', paused: '已暂停', selected: '已选',
 };
 
 function toast(message, isError = false) {
@@ -21,9 +21,28 @@ async function api(path, options = {}) {
     ...options,
     headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
   });
-  const body = await response.json();
-  if (!response.ok) throw new Error(body.error || '请求失败');
+  const text = await response.text();
+  let body = {};
+  try { body = text ? JSON.parse(text) : {}; }
+  catch (_) { body = { error: text || `本地服务返回了无法识别的数据（HTTP ${response.status}）` }; }
+  if (!response.ok) throw new Error(body.error || `请求失败（HTTP ${response.status}）`);
   return body;
+}
+
+function showCourseFormMessage(message = '') {
+  const element = $('#courseFormMessage');
+  element.textContent = message;
+  element.hidden = !message;
+}
+
+async function resyncStateAfterError() {
+  try {
+    const latest = await api('/api/state');
+    renderState(latest);
+    return true;
+  } catch (_) {
+    return false;
+  }
 }
 
 function formatTime(value) {
@@ -39,12 +58,63 @@ function nextCheck(course) {
 
 function resultSummary(course) {
   const matches = course.lastResult?.matches || [];
-  if (!matches.length) return course.lastResult?.message || course.lastError || '尚未检查';
-  return matches.map(item => {
+  const timing = course.lastResult?.timing;
+  const preparationMs = timing?.preheatSearchMs ?? timing?.searchMs;
+  const submitMs = timing?.submitMs ?? timing?.attemptMs;
+  const timingText = timing
+    ? ` · ${timing.preheatSearchMs == null ? '搜索' : '预热'} ${preparationMs ?? '?'}ms${submitMs == null ? '' : ` · 提交 ${submitMs}ms`}`
+    : '';
+  if (!matches.length) return `${course.lastResult?.message || course.lastError || '尚未检查'}${timingText}`;
+  return `${matches.map(item => {
     const capacity = item.capacity == null ? '?' : item.capacity;
     const selected = item.selected == null ? (item.isFull ? '已满' : '?') : item.selected;
     return `${item.teachingClassId || '未标班号'} · ${item.teacher || '教师未知'} · ${selected}/${capacity}`;
-  }).join('；');
+  }).join('；')}${timingText}`;
+}
+
+function setHealthStep(selector, level, text) {
+  const step = $(selector);
+  step.className = `health-step ${level || ''}`;
+  step.querySelector('small').textContent = text;
+}
+
+function renderDiagnostic(runtime, courses) {
+  const diagnostic = runtime.diagnostic || {
+    level: 'info', source: '本机程序', title: '等待启动',
+    detail: '尚未执行网站检测。', action: '添加课程后点击“启动任务”。',
+  };
+  const panel = $('#diagnosticPanel');
+  panel.dataset.level = diagnostic.level || 'info';
+  $('#diagnosticSource').textContent = diagnostic.source || '运行诊断';
+  $('#diagnosticTitle').textContent = diagnostic.title || runtime.message || '状态未知';
+  $('#diagnosticDetail').textContent = diagnostic.detail || runtime.message || '正在等待更多信息。';
+  $('#diagnosticAction').textContent = diagnostic.action || '查看受控 Edge 与实时事件。';
+  $('#diagnosticTechnical').textContent = JSON.stringify({
+    diagnostic,
+    runtime: {
+      running: runtime.running,
+      browser: runtime.browser,
+      browserTabs: runtime.browserTabs,
+      login: runtime.login,
+      page: runtime.page,
+      lastCheckAt: runtime.lastCheckAt,
+      message: runtime.message,
+    },
+    courses: courses.map(course => ({
+      courseNumber: course.courseNumber,
+      teachingClassId: course.teachingClassId,
+      mode: course.mode,
+      status: course.status,
+      lastResult: course.lastResult,
+      lastError: course.lastError,
+    })),
+  }, null, 2);
+
+  setHealthStep('#healthBrowser', runtime.browser === 'open' ? 'ok' : runtime.running ? 'warn' : '', runtime.browser === 'open' ? `已打开 · ${runtime.browserTabs ?? 1} 个页面` : runtime.running ? '正在打开' : '尚未启动');
+  setHealthStep('#healthLogin', runtime.login === 'ok' ? 'ok' : ['manual', 'recovering'].includes(runtime.login) ? 'warn' : '', ({ ok: '登录有效', manual: '等待人工认证', recovering: '自动恢复中' })[runtime.login] || '等待浏览器');
+  setHealthStep('#healthPage', ['all-courses', 'selection'].includes(runtime.page) ? 'ok' : runtime.login === 'ok' ? 'warn' : '', ({ 'all-courses': '全校课程已就绪', selection: '选课系统已进入' })[runtime.page] || '尚未进入');
+  const courseDiagnostic = courses.find(course => course.lastResult?.diagnostic)?.lastResult?.diagnostic;
+  setHealthStep('#healthCourse', courseDiagnostic?.level || (runtime.lastCheckAt ? 'ok' : ''), runtime.lastCheckAt ? (courseDiagnostic?.title || '已收到课程数据') : '尚未检测');
 }
 
 function renderState(next) {
@@ -56,13 +126,13 @@ function renderState(next) {
   $('#startButton').disabled = runtime.running;
   $('#stopButton').disabled = !runtime.running;
 
+  renderDiagnostic(runtime, state.courses);
   const settings = state.settings;
   const form = $('#settingsForm');
   if (document.activeElement?.form !== form) {
     form.watchMinSeconds.value = settings.watchMinSeconds;
     form.watchMaxSeconds.value = settings.watchMaxSeconds;
-    form.rushRoundSeconds.value = settings.rushRoundSeconds;
-    form.rushActionGapMs.value = settings.rushActionGapMs;
+    form.rushActionGapMs.value = settings.rushActionGapMs ?? 0;
     form.autoConfirm.checked = settings.autoConfirm;
     form.autoPickExperiment.checked = settings.autoPickExperiment;
   }
@@ -77,9 +147,9 @@ function renderState(next) {
       <td>${escapeHtml(course.teachingClassId || '自动选择首个可选班')}</td>
       <td><span class="pill ${modeClass}">${course.mode === 'rush' ? '抢课' : '蹲课'}</span><small>${course.startAt ? `启动 ${new Date(course.startAt).toLocaleString('zh-CN', { hour12: false })}` : ''}</small></td>
       <td><span class="pill ${statusClass}">${statusLabels[course.status] || course.status}</span></td>
-      <td><strong>${escapeHtml(course.lastResult?.message || '等待首次检查')}</strong><small>${escapeHtml(resultSummary(course))}</small></td>
+      <td><strong>${escapeHtml(course.lastResult?.message || '等待首次检查')}</strong><small>${escapeHtml(resultSummary(course))}</small>${course.lastResult?.diagnostic ? `<span class="reason-tag">${escapeHtml(course.lastResult.diagnostic.source)} · ${escapeHtml(course.lastResult.diagnostic.title)}</span>` : ''}</td>
       <td>${nextCheck(course)}</td>
-      <td><button class="delete" data-delete="${course.id}" aria-label="删除 ${escapeHtml(course.courseNumber)}">删除</button></td>`;
+      <td><button class="delete" data-delete="${escapeHtml(course.id)}" aria-label="删除 ${escapeHtml(course.courseNumber)}">删除</button></td>`;
     return row;
   }));
   $('#emptyState').hidden = state.courses.length > 0;
@@ -103,7 +173,13 @@ function addLog(entry) {
 
 $('#courseForm').addEventListener('submit', async event => {
   event.preventDefault();
-  const data = new FormData(event.currentTarget);
+  const form = event.currentTarget;
+  const button = form.querySelector('[type="submit"]');
+  if (button.disabled) return;
+  button.disabled = true;
+  button.textContent = '正在加入…';
+  showCourseFormMessage();
+  const data = new FormData(form);
   try {
     const payload = Object.fromEntries(data);
     if (payload.startAt) payload.startAt = new Date(payload.startAt).toISOString();
@@ -112,11 +188,19 @@ $('#courseForm').addEventListener('submit', async event => {
       body: JSON.stringify(payload),
     });
     renderState(next);
-    event.currentTarget.reset();
-    event.currentTarget.mode.value = 'watch';
+    form.reset();
+    form.mode.value = 'watch';
     syncModeFields();
     toast('课程已加入任务表');
-  } catch (error) { toast(error.message, true); }
+  } catch (error) {
+    const synced = await resyncStateAfterError();
+    const message = `添加失败：${error.message}${synced ? '。任务表已与后台重新同步。' : '。同时无法重新读取后台状态。'}`;
+    showCourseFormMessage(message);
+    toast(message, true);
+  } finally {
+    button.disabled = false;
+    button.textContent = '＋ 加入任务表';
+  }
 });
 
 $('#settingsForm').addEventListener('submit', async event => {
@@ -128,7 +212,6 @@ $('#settingsForm').addEventListener('submit', async event => {
       body: JSON.stringify({
         watchMinSeconds: Number(form.watchMinSeconds.value),
         watchMaxSeconds: Number(form.watchMaxSeconds.value),
-        rushRoundSeconds: Number(form.rushRoundSeconds.value),
         rushActionGapMs: Number(form.rushActionGapMs.value),
         autoConfirm: form.autoConfirm.checked,
         autoPickExperiment: form.autoPickExperiment.checked,
@@ -158,11 +241,31 @@ $('#courseRows').addEventListener('click', async event => {
 
 $('#clearLogs').addEventListener('click', () => { localLogs = []; $('#logs').replaceChildren(); });
 
+$('#copyDiagnostic').addEventListener('click', async () => {
+  const text = $('#diagnosticTechnical').textContent;
+  try {
+    await navigator.clipboard.writeText(text);
+    toast('诊断信息已复制，可直接发给维护者');
+  } catch (_) {
+    const area = document.createElement('textarea');
+    area.value = text;
+    document.body.append(area);
+    area.select();
+    document.execCommand('copy');
+    area.remove();
+    toast('诊断信息已复制');
+  }
+});
+
 function syncModeFields() {
   const rush = $('#courseForm').mode.value === 'rush';
   const field = $('#rushTimeField');
+  const teachingClass = $('#courseForm').teachingClassId;
   field.hidden = !rush;
   field.querySelector('input').required = rush;
+  teachingClass.required = rush;
+  teachingClass.placeholder = rush ? '抢课必须填写准确教学班号' : '蹲课可留空';
+  $('#teachingClassRequirement').textContent = rush ? '抢课必填' : '蹲课可选';
 }
 
 $('#courseForm').addEventListener('change', event => {

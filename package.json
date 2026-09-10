@@ -1,12 +1,24 @@
 {
-  "name": "jnu-course-keeper",
-  "version": "0.1.0",
+  "name": "jnu-course-watch-rush",
+  "productName": "JNU Course Watch & Rush",
+  "version": "0.2.0",
   "private": true,
-  "description": "暨南大学选课余量监控与本地自动选课助手",
-  "main": "src/server.js",
+  "description": "暨南大学全自动蹲课与定时抢课桌面助手",
+  "author": "ctmd1234567",
+  "license": "MIT",
+  "homepage": "https://github.com/ctmd1234567/jnu-course-watch-rush#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ctmd1234567/jnu-course-watch-rush.git"
+  },
+  "bugs": "https://github.com/ctmd1234567/jnu-course-watch-rush/issues",
+  "main": "electron-main.js",
   "scripts": {
-    "start": "node src/server.js",
-    "check": "node --check src/server.js && node --check src/course-agent.js && node --check src/store.js && node --check public/app.js",
+    "start": "electron .",
+    "start:web": "node src/server.js",
+    "desktop": "electron .",
+    "build:win": "electron-builder --win nsis portable",
+    "check": "node --check electron-main.js && node --check src/server.js && node --check src/course-agent.js && node --check src/store.js && node --check public/app.js",
     "capture-ui": "node scripts/capture-ui.js",
     "test": "node --test"
   },
@@ -16,5 +28,44 @@
   "dependencies": {
     "express": "^5.1.0",
     "playwright-core": "^1.55.0"
+  },
+  "devDependencies": {
+    "electron": "^44.3.0",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "io.github.ctmd1234567.jnu-course-watch-rush",
+    "productName": "JNU Course Watch & Rush",
+    "executableName": "JNU-Course-Watch-Rush",
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/playwright-core/**/*"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron-main.js",
+      "src/**/*",
+      "public/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "JNU 蹲课抢课助手",
+      "artifactName": "JNU-Course-Watch-Rush-Setup-${version}-${arch}.${ext}"
+    },
+    "portable": {
+      "artifactName": "JNU-Course-Watch-Rush-Portable-${version}-${arch}.${ext}"
+    }
   }
 }

@@ -4,24 +4,30 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#0a1733">
-  <title>JNU Course Keeper</title>
+  <title>JNU 蹲课抢课助手</title>
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
+  <aside class="automation-banner" role="note">
+    <div class="shell">
+      <span class="banner-icon">i</span>
+      <p><strong>浏览器与登录说明</strong>点击“启动任务”后，程序会额外打开一个由 Playwright 控制的 Microsoft Edge 窗口。它使用独立登录环境，不会接管你已经打开的个人 Edge 页面；首次使用或 Session 失效时可能需要重新登录。若统一认证额外打开学校“登录指南”，程序会关闭指南并保留真正的身份验证页。出现密码、验证码或短信验证时会连续响铃并发送 Windows 通知；你完成认证后任务自动继续。请勿关闭这个受控 Edge 窗口。</p>
+    </div>
+  </aside>
   <div class="ambient" aria-hidden="true"></div>
   <header class="hero shell">
     <nav class="nav">
-      <a class="brand" href="#top" aria-label="JNU Course Keeper 首页">
-        <span class="brand-mark">JK</span>
-        <span>JNU Course Keeper</span>
+      <a class="brand" href="#top" aria-label="JNU 蹲课抢课助手首页">
+        <span class="brand-mark">WR</span>
+        <span>JNU Course Watch & Rush</span>
       </a>
       <span class="local-badge"><i></i>仅在本机运行</span>
     </nav>
     <div class="hero-card" id="top">
       <div class="hero-copy">
-        <span class="eyebrow">COURSE AVAILABILITY AUTOMATION</span>
-        <h1>把等待交给程序，<br><em>把选择留给自己。</em></h1>
-        <p>通过可见的 Edge 浏览器和学校页面正常控件，顺序检查多门课程、发现余量并按你的设置完成确认。</p>
+        <span class="eyebrow">AUTOMATIC COURSE WATCHING & RUSHING</span>
+        <h1>全自动蹲课，<br><em>定时抢课。</em></h1>
+        <p>填入课程号即可托管：自动保持登录、搜索课程、识别余量、点击选择并确认；只有验证码等人工认证才会请你接管。</p>
         <div class="hero-actions">
           <button class="button primary" id="startButton"><span class="play">▶</span>启动任务</button>
           <button class="button ghost" id="stopButton">停止</button>
@@ -36,13 +42,38 @@
   </header>
 
   <main class="shell main-grid">
+    <section class="panel diagnostic-panel full-width" id="diagnosticPanel" data-level="info">
+      <div class="section-heading compact diagnostic-heading">
+        <div><span class="section-index">00</span><h2>可视化诊断中心</h2></div>
+        <button class="text-button" id="copyDiagnostic" type="button">复制诊断信息</button>
+      </div>
+      <div class="diagnostic-layout">
+        <div class="diagnostic-summary">
+          <span class="diagnostic-source" id="diagnosticSource">本机程序</span>
+          <h3 id="diagnosticTitle">等待启动</h3>
+          <p id="diagnosticDetail">尚未执行网站检测。</p>
+          <div class="diagnostic-action"><strong>你需要做什么</strong><span id="diagnosticAction">添加课程后点击“启动任务”。</span></div>
+        </div>
+        <div class="health-flow" aria-label="运行链路">
+          <div class="health-step" id="healthBrowser"><i></i><span>1</span><strong>受控 Edge</strong><small>尚未启动</small></div>
+          <div class="health-step" id="healthLogin"><i></i><span>2</span><strong>登录认证</strong><small>等待浏览器</small></div>
+          <div class="health-step" id="healthPage"><i></i><span>3</span><strong>选课页面</strong><small>尚未进入</small></div>
+          <div class="health-step" id="healthCourse"><i></i><span>4</span><strong>课程返回</strong><small>尚未检测</small></div>
+        </div>
+      </div>
+      <details class="technical-diagnostic" id="technicalDiagnostic">
+        <summary>查看技术详情</summary>
+        <pre id="diagnosticTechnical">暂无</pre>
+      </details>
+    </section>
+
     <section class="panel add-panel">
       <div class="section-heading">
         <div>
           <span class="section-index">01</span>
           <h2>添加选课任务</h2>
         </div>
-        <p>同一课程有多个班时，建议填写教学班号。</p>
+        <p>抢课必须填写课程号和教学班号；蹲课可只填课程号。</p>
       </div>
       <form id="courseForm" class="course-form">
         <label>
@@ -50,8 +81,8 @@
           <input name="courseNumber" autocomplete="off" placeholder="例如 08060230" required maxlength="32">
         </label>
         <label>
-          <span>教学班号 <small>可选</small></span>
-          <input name="teachingClassId" autocomplete="off" placeholder="留空则选择首个可选班" maxlength="40">
+          <span>教学班号 <small id="teachingClassRequirement">蹲课可选</small></span>
+          <input name="teachingClassId" autocomplete="off" placeholder="蹲课可留空" maxlength="40">
         </label>
         <fieldset>
           <legend>模式</legend>
@@ -63,19 +94,20 @@
           <label class="mode-card rush">
             <input type="radio" name="mode" value="rush">
             <span class="mode-icon">↯</span>
-            <span><strong>抢课</strong><small>较短间隔、主动提交</small></span>
+            <span><strong>抢课</strong><small>定时启动、到点立即执行</small></span>
           </label>
         </fieldset>
         <label class="rush-time" id="rushTimeField" hidden>
           <span>抢课启动时间 <b>*</b></span>
           <input type="datetime-local" name="startAt">
-          <small>建议提前 2–5 分钟启动任务并完成登录，程序到点才开始快速轮转。</small>
+          <small>建议提前 2–5 分钟启动并完成登录；进入、重新登录或运行中新增抢课时预热一次，开抢前 30 秒再最终预热，到点跳过搜索直接提交。</small>
         </label>
         <button class="button primary add-button" type="submit">＋ 加入任务表</button>
+        <div class="form-message" id="courseFormMessage" role="alert" aria-live="assertive" hidden></div>
       </form>
       <div class="notice">
         <span>!</span>
-        <p><strong>自动操作说明</strong>两种模式都会在发现可选名额后点击学校页面的“选择”和“确认”。账号、密码、验证码和短信验证始终由你本人完成。</p>
+        <p><strong>便捷全自动</strong>登录有效时，从进入选课、搜索课程到选择确认都自动完成；账号、密码、验证码和短信验证始终由你本人完成。</p>
       </div>
     </section>
 
@@ -94,13 +126,9 @@
           <p>允许范围 15–180 秒。每次加入随机抖动，避免严格固定频率。</p>
         </div>
         <div class="setting-block">
-          <div class="setting-title"><span class="dot amber"></span><strong>抢课快速轮转</strong><small>到点批量执行</small></div>
-          <div class="range-pair rush-ranges">
-            <label><span>整轮重试</span><div><input type="number" name="rushRoundSeconds" min="2" max="15"><b>秒</b></div></label>
-            <span class="range-line"></span>
-            <label><span>单课动作</span><div><input type="number" name="rushActionGapMs" min="500" max="3000" step="100"><b>ms</b></div></label>
-          </div>
-          <p>建议整轮 2–5 秒、单课 800–1500ms。所有课程快速串行，避免同一登录会话发生并发覆盖。</p>
+          <div class="setting-title"><span class="dot amber"></span><strong>抢课额外动作间隔</strong><small>默认 0ms</small></div>
+          <label class="single-number"><input type="number" name="rushActionGapMs" step="1"><b>ms</b></label>
+          <p>不设上下限。追求最快可填 0；网络或学校页面不稳定时建议 100–500ms。</p>
         </div>
         <label class="switch-row">
           <span><strong>自动点击确认</strong><small>关闭后停在确认弹窗</small></span>
