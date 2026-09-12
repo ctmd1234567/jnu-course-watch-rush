@@ -28,6 +28,7 @@ async function createWindow() {
     minWidth: 980,
     minHeight: 680,
     backgroundColor: '#08152f',
+    icon: path.join(__dirname, 'build', 'icon.png'),
     autoHideMenuBar: true,
     title: 'JNU 蹲课抢课助手',
     webPreferences: {

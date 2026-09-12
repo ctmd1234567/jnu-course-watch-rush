@@ -1,6 +1,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
-const { spawn } = require('node:child_process');
+const { execFileSync, spawn } = require('node:child_process');
 const { chromium } = require('playwright-core');
 
 const START_URL = 'https://jwxk.jnu.edu.cn/';
@@ -65,6 +65,54 @@ function isLoginGuideUrl(url) {
   return /^https:\/\/netc\.jnu\.edu\.cn\/2020\/1124\/c10374a565499\/page\.htm(?:[?#]|$)/i.test(String(url || ''));
 }
 
+function isAccessDeniedMessage(message) {
+  return /未获得.{0,12}(?:本系统|系统).{0,12}访问授权|(?:无权|没有权限|未授权).{0,12}(?:访问|进入).{0,12}(?:选课|本系统|系统)/.test(
+    String(message || '').replace(/\s+/g, ' '),
+  );
+}
+
+function executableFromOpenCommand(command) {
+  const text = String(command || '').trim();
+  const quoted = text.match(/^"([^"]+\.exe)"/i);
+  const plain = text.match(/^(.+?\.exe)(?:\s|$)/i);
+  const executable = quoted?.[1] || plain?.[1] || '';
+  return executable.replace(/%([^%]+)%/g, (_match, name) => process.env[name] || process.env[name.toUpperCase()] || `%${name}%`);
+}
+
+function isChromiumExecutable(executablePath) {
+  return /(?:^|[\\/])(msedge|chrome|chromium|brave|vivaldi|opera)\.exe$/i.test(String(executablePath || ''));
+}
+
+function browserLabel(executablePath) {
+  const executable = path.basename(String(executablePath || ''), '.exe').toLowerCase();
+  return ({ msedge: 'Microsoft Edge', chrome: 'Google Chrome', chromium: 'Chromium', brave: 'Brave', vivaldi: 'Vivaldi', opera: 'Opera' })[executable] || executable || 'Chromium';
+}
+
+function findDefaultChromiumBrowser() {
+  if (process.platform !== 'win32') return null;
+  try {
+    const choice = execFileSync('reg.exe', [
+      'query',
+      'HKCU\\Software\\Microsoft\\Windows\\Shell\\Associations\\UrlAssociations\\https\\UserChoice',
+      '/v',
+      'ProgId',
+    ], { encoding: 'utf8', windowsHide: true, timeout: 3_000 });
+    const progId = choice.match(/ProgId\s+REG_\w+\s+([^\r\n]+)/i)?.[1]?.trim();
+    if (!progId) return null;
+    const openCommand = execFileSync('reg.exe', [
+      'query',
+      `HKCR\\${progId}\\shell\\open\\command`,
+      '/ve',
+    ], { encoding: 'utf8', windowsHide: true, timeout: 3_000 });
+    const command = openCommand.match(/REG_(?:EXPAND_)?SZ\s+([^\r\n]+)/i)?.[1]?.trim();
+    const executablePath = executableFromOpenCommand(command);
+    if (!isChromiumExecutable(executablePath) || !fs.existsSync(executablePath)) return null;
+    return { executablePath, label: browserLabel(executablePath), source: '系统默认浏览器' };
+  } catch (_) {
+    return null;
+  }
+}
+
 function isCourseSearchResponse(response) {
   try {
     const request = response.request();
@@ -97,11 +145,12 @@ function responseSignals(payload, output = [], depth = 0) {
 
 const DIAGNOSTIC_CATALOG = {
   idle: ['info', '本机程序', '等待启动', '添加课程后点击“启动任务”。'],
-  starting: ['info', '本机程序', '正在启动', '正在打开可见的 Microsoft Edge。'],
+  starting: ['info', '本机程序', '正在启动', '正在打开可见的受控浏览器。'],
   ready: ['ok', '运行正常', '选课系统已就绪', '程序会按任务时间自动检查。'],
   rush_preheated: ['ok', '抢课预热', '教学班已预热', '到达设定时间后将跳过搜索，直接调用学校页面的选课逻辑。'],
   auth_recovering: ['warn', '登录状态', '正在恢复登录', '程序正在自动点击登录入口或“开始选课”。'],
-  auth_manual: ['warn', '人工认证', '需要你完成认证', '请在 Edge 中完成账号、验证码或短信验证，完成后程序自动继续。'],
+  auth_manual: ['warn', '人工认证', '需要你完成认证', '请在受控浏览器中完成账号、验证码或短信验证，完成后程序自动继续。'],
+  access_denied: ['error', '学校系统', '当前账号未获得选课系统访问授权', '请用同一账号手动打开暨大选课官网；若仍显示该提示，请确认选课批次或联系教务部门开通权限。'],
   site_network: ['error', '学校网站/网络', '学校网站暂时无法访问', '检查网络、VPN 和学校网站；程序会降低频率后重试。'],
   page_changed: ['error', '页面适配', '无法识别选课页面', '学校页面结构可能更新，请停止任务并提交脱敏诊断信息。'],
   course_not_found: ['warn', '课程数据', '没有找到匹配课程', '核对课程号和教学班号；也可能是本轮课程尚未开放。'],
@@ -110,11 +159,11 @@ const DIAGNOSTIC_CATALOG = {
   response_unreliable: ['error', '页面数据', '返回结果无法可靠识别', '为避免误选，本轮不会点击；请查看原始容量和按钮状态。'],
   submitting: ['info', '学校页面', '发现余量，正在提交', '程序正在点击学校页面的选择与确认按钮。'],
   site_rejected: ['warn', '学校返回', '学校拒绝了选课', '查看学校弹窗原文，通常与冲突、限制、已满或选课规则有关。'],
-  credit_limit_stopped: ['error', '学校返回', '已达到学分上限，任务已停止', '请查看受控 Edge 中的学校原始提示；调整选课计划后再手动启动任务。'],
-  result_unconfirmed: ['error', '结果确认', '点击后无法确认是否成功', '请立即查看 Edge 当前页面，避免重复操作。'],
+  credit_limit_stopped: ['error', '学校返回', '已达到学分上限，任务已停止', '请查看受控浏览器中的学校原始提示；调整选课计划后再手动启动任务。'],
+  result_unconfirmed: ['error', '结果确认', '点击后无法确认是否成功', '请立即查看受控浏览器当前页面，避免重复操作。'],
   already_selected: ['ok', '学校返回', '课程已经选上', '该课程已自动移出活动任务表。'],
   selected: ['ok', '学校返回', '选课成功', '该课程已移出活动任务表。'],
-  stopped_by_browser: ['info', '本机程序', '任务已停止', '检测到你关闭了受控 Edge，程序不会自动重新打开。'],
+  stopped_by_browser: ['info', '本机程序', '任务已停止', '检测到你关闭了受控浏览器，程序不会自动重新打开。'],
   program_error: ['error', '本机程序', '程序执行异常', '程序会重试；若连续出现，请复制诊断信息反馈。'],
 };
 
@@ -125,6 +174,7 @@ function makeDiagnostic(code, detail = '', technical = '') {
 
 function classifyError(error) {
   const message = String(error?.message || error || '未知错误');
+  if (isAccessDeniedMessage(message)) return makeDiagnostic('access_denied', message);
   if (/ERR_|net::|网络|超时|timeout|timed out|502|503|504|连接|socket/i.test(message)) {
     return makeDiagnostic('site_network', message);
   }
@@ -157,6 +207,7 @@ class CourseAgent {
     this.runtime = {
       running: false,
       browser: 'closed',
+      browserName: '',
       browserTabs: 0,
       login: 'unknown',
       page: 'unknown',
@@ -210,13 +261,51 @@ class CourseAgent {
   }
 
   findBrowser() {
+    const preferred = findDefaultChromiumBrowser();
+    if (preferred) return preferred;
     const candidates = [
-      process.env.PLAYWRIGHT_BROWSER,
-      'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
-      'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
-      'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-    ].filter(Boolean);
-    return candidates.find(candidate => fs.existsSync(candidate));
+      [process.env.PLAYWRIGHT_BROWSER, '自定义浏览器', '环境变量'],
+      ['C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe', 'Microsoft Edge', '自动回退'],
+      ['C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe', 'Microsoft Edge', '自动回退'],
+      ['C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', 'Google Chrome', '自动回退'],
+      [process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'Google', 'Chrome', 'Application', 'chrome.exe'), 'Google Chrome', '自动回退'],
+      [process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'BraveSoftware', 'Brave-Browser', 'Application', 'brave.exe'), 'Brave', '自动回退'],
+    ];
+    const found = candidates.find(([candidate]) => candidate && fs.existsSync(candidate));
+    return found ? { executablePath: found[0], label: found[1], source: found[2] } : null;
+  }
+
+  async accessDeniedText() {
+    const pages = this.context?.pages() || (this.page ? [this.page] : []);
+    for (const candidate of pages) {
+      if (candidate.isClosed()) continue;
+      if (isLoginGuideUrl(candidate.url())) continue;
+      for (const frame of candidate.frames()) {
+        const text = await frame.locator('body').innerText({ timeout: 600 }).catch(() => '');
+        if (!isAccessDeniedMessage(text)) continue;
+        const normalized = text.replace(/\s+/g, ' ').trim();
+        const marker = normalized.search(/未获得|无权|没有权限|未授权/);
+        return normalized.slice(Math.max(0, marker - 40), marker + 180);
+      }
+    }
+    return '';
+  }
+
+  haltForAccessDenied(detail) {
+    this.running = false;
+    this.markSelectionUnavailable('学校拒绝当前账号访问');
+    const diagnostic = makeDiagnostic('access_denied', detail);
+    this.updateRuntime({
+      running: false,
+      login: 'denied',
+      page: 'access-denied',
+      currentCourseId: null,
+      message: diagnostic.title,
+      diagnostic,
+    });
+    this.log('error', diagnostic.title, { detail });
+    this.beep(5);
+    this.notify('选课系统未授权', '学校系统拒绝当前账号访问，请核对选课批次或联系教务部门。');
   }
 
   clearBrowserSessionRestore() {
@@ -271,8 +360,9 @@ class CourseAgent {
 
   async ensureBrowser() {
     if (this.context && this.page && !this.page.isClosed()) return;
-    const executablePath = this.findBrowser();
-    if (!executablePath) throw new Error('找不到 Microsoft Edge 或 Chrome');
+    const browser = this.findBrowser();
+    if (!browser) throw new Error('找不到 Playwright 可控制的 Chromium 浏览器（建议安装 Microsoft Edge）');
+    const { executablePath } = browser;
     fs.mkdirSync(this.profileDir, { recursive: true });
     this.clearBrowserSessionRestore();
     this.context = await chromium.launchPersistentContext(this.profileDir, {
@@ -298,7 +388,7 @@ class CourseAgent {
       setTimeout(() => this.clearBrowserSessionRestore(), 750);
       if (!this.running) return;
       this.running = false;
-      this.log('info', '检测到受控 Edge 已关闭，任务自动停止');
+      this.log('info', '检测到受控浏览器已关闭，任务自动停止');
       this.updateRuntime({
         running: false,
         browser: 'closed',
@@ -306,7 +396,7 @@ class CourseAgent {
         login: 'unknown',
         page: 'unknown',
         currentCourseId: null,
-        message: '受控 Edge 已关闭，任务已停止',
+        message: '受控浏览器已关闭，任务已停止',
         diagnostic: makeDiagnostic('stopped_by_browser'),
       });
     });
@@ -345,7 +435,8 @@ class CourseAgent {
         this.updateRuntime({ browserTabs: this.context.pages().filter(page => !page.isClosed()).length });
       }).catch(() => {});
     });
-    this.updateRuntime({ browser: 'open', browserTabs: 1, message: '浏览器已打开' });
+    this.log('info', `使用${browser.source}：${browser.label}`, { executablePath });
+    this.updateRuntime({ browser: 'open', browserName: browser.label, browserTabs: 1, message: `${browser.label} 已打开` });
     await this.page.goto(START_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 }).catch(error => {
       this.log('warn', `首次打开入口失败，稍后重试: ${error.message}`);
       this.setDiagnostic('site_network', error.message);
@@ -407,6 +498,11 @@ class CourseAgent {
   }
 
   async recoverLogin() {
+    const initialDenied = await this.accessDeniedText();
+    if (initialDenied) {
+      this.haltForAccessDenied(initialDenied);
+      return false;
+    }
     if (await this.isSelectionApp()) {
       this.markSelectionReady('检测到有效选课页面');
       this.updateRuntime({ login: 'ok', diagnostic: makeDiagnostic('ready') });
@@ -427,6 +523,11 @@ class CourseAgent {
     const deadline = Date.now() + 30 * 60_000;
     let announcedManual = false;
     while (this.running && Date.now() < deadline) {
+      const denied = await this.accessDeniedText();
+      if (denied) {
+        this.haltForAccessDenied(denied);
+        return false;
+      }
       if (await this.enterSelectionIfNeeded()) {
         this.markSelectionReady('登录或开始选课后进入');
         this.updateRuntime({ login: 'ok', message: '登录已恢复', diagnostic: makeDiagnostic('ready', '已自动重新进入选课系统。') });
@@ -438,7 +539,7 @@ class CourseAgent {
         this.updateRuntime({ login: 'manual', message: '请在浏览器中完成人工登录', diagnostic: makeDiagnostic('auth_manual') });
         this.log('warn', '需要人工登录、验证码或统一认证；完成后将自动继续');
         this.beep(8);
-        this.notify('需要人工认证', '请在受控 Edge 窗口完成登录、验证码或短信验证；完成后任务会自动继续。');
+        this.notify('需要人工认证', '请在受控浏览器窗口完成登录、验证码或短信验证；完成后任务会自动继续。');
       }
       await sleep(2_000);
     }
@@ -565,7 +666,10 @@ class CourseAgent {
     const body = this.page.locator(bodySelector);
     const before = await body.innerHTML().catch(() => '');
     const queryResponse = this.page.waitForResponse(isCourseSearchResponse, { timeout: 8_000 })
-      .then(response => ({ type: 'response', ok: response.ok(), status: response.status() }))
+      .then(async response => {
+        const payload = await response.json().catch(() => null);
+        return { type: 'response', ok: response.ok(), status: response.status(), signals: responseSignals(payload) };
+      })
       .catch(() => null);
     if (split && await button.isVisible().catch(() => false)) await button.click();
     else await input.press('Enter');
@@ -576,9 +680,29 @@ class CourseAgent {
       { timeout: 8_000 },
     ).then(() => ({ type: 'dom' })).catch(() => null);
     const refreshSignal = await Promise.race([queryResponse, domChanged]);
-    if (!refreshSignal) throw new Error('课程搜索请求未返回，未复用旧的搜索结果');
-    if (refreshSignal.type === 'response' && !refreshSignal.ok) {
-      throw new Error(`课程搜索请求失败，学校网站返回 HTTP ${refreshSignal.status}`);
+    if (!refreshSignal) {
+      const denied = await this.accessDeniedText();
+      if (denied) {
+        this.haltForAccessDenied(denied);
+        throw new Error(denied);
+      }
+      if (!await this.isSelectionApp()) throw new Error('登录状态失效：课程搜索后已离开选课系统');
+      throw new Error('课程搜索请求未返回，未复用旧的搜索结果');
+    }
+    if (refreshSignal.type === 'response') {
+      const denied = refreshSignal.signals.find(signal => isAccessDeniedMessage(signal.message));
+      if (denied) {
+        this.haltForAccessDenied(denied.message);
+        throw new Error(denied.message);
+      }
+      const expired = refreshSignal.signals.find(signal =>
+        signal.code === '302' || /(?:登录|session|会话).{0,12}(?:失效|过期|超时)|请重新登录|未登录/i.test(signal.message),
+      );
+      if (expired) throw new Error(`登录状态失效：${expired.message || `学校返回错误码 ${expired.code}`}`);
+      if (!refreshSignal.ok) {
+        if ([302, 401].includes(refreshSignal.status)) throw new Error(`登录状态失效：学校网站返回 HTTP ${refreshSignal.status}`);
+        throw new Error(`课程搜索请求失败，学校网站返回 HTTP ${refreshSignal.status}`);
+      }
     }
     await this.page.locator(`${bodySelector} .cv-row`).first().waitFor({ state: 'attached', timeout: 4_000 }).catch(() => {});
     await sleep(120);
@@ -1211,4 +1335,18 @@ class CourseAgent {
   }
 }
 
-module.exports = { CourseAgent, parseCapacity, assessCourseResult, responseSignals, classifyError, makeDiagnostic, needsFinalRushPreheat, isCreditLimitMessage, isLoginGuideUrl, isCourseSearchResponse };
+module.exports = {
+  CourseAgent,
+  parseCapacity,
+  assessCourseResult,
+  responseSignals,
+  classifyError,
+  makeDiagnostic,
+  needsFinalRushPreheat,
+  isCreditLimitMessage,
+  isLoginGuideUrl,
+  isCourseSearchResponse,
+  isAccessDeniedMessage,
+  executableFromOpenCommand,
+  isChromiumExecutable,
+};

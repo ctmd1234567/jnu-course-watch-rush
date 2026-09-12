@@ -11,7 +11,7 @@
   <aside class="automation-banner" role="note">
     <div class="shell">
       <span class="banner-icon">i</span>
-      <p><strong>浏览器与登录说明</strong>点击“启动任务”后，程序会额外打开一个由 Playwright 控制的 Microsoft Edge 窗口。它使用独立登录环境，不会接管你已经打开的个人 Edge 页面；首次使用或 Session 失效时可能需要重新登录。若统一认证额外打开学校“登录指南”，程序会关闭指南并保留真正的身份验证页。出现密码、验证码或短信验证时会连续响铃并发送 Windows 通知；你完成认证后任务自动继续。请勿关闭这个受控 Edge 窗口。</p>
+      <p><strong>浏览器与登录说明</strong>点击“启动任务”后，程序会额外打开一个由 Playwright 控制的浏览器窗口：优先使用系统默认的 Chromium 浏览器，无法控制时优先回退到 Microsoft Edge。它使用独立登录环境，不会接管你原有的浏览器页面；首次使用或 Session 失效时可能需要重新登录。出现密码、验证码或短信验证时会连续响铃并发送 Windows 通知；你完成认证后任务自动继续。请勿关闭这个受控浏览器窗口。</p>
     </div>
   </aside>
   <div class="ambient" aria-hidden="true"></div>
@@ -55,7 +55,7 @@
           <div class="diagnostic-action"><strong>你需要做什么</strong><span id="diagnosticAction">添加课程后点击“启动任务”。</span></div>
         </div>
         <div class="health-flow" aria-label="运行链路">
-          <div class="health-step" id="healthBrowser"><i></i><span>1</span><strong>受控 Edge</strong><small>尚未启动</small></div>
+          <div class="health-step" id="healthBrowser"><i></i><span>1</span><strong>受控浏览器</strong><small>尚未启动</small></div>
           <div class="health-step" id="healthLogin"><i></i><span>2</span><strong>登录认证</strong><small>等待浏览器</small></div>
           <div class="health-step" id="healthPage"><i></i><span>3</span><strong>选课页面</strong><small>尚未进入</small></div>
           <div class="health-step" id="healthCourse"><i></i><span>4</span><strong>课程返回</strong><small>尚未检测</small></div>

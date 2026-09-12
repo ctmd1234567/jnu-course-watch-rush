@@ -88,12 +88,13 @@ function renderDiagnostic(runtime, courses) {
   $('#diagnosticSource').textContent = diagnostic.source || '运行诊断';
   $('#diagnosticTitle').textContent = diagnostic.title || runtime.message || '状态未知';
   $('#diagnosticDetail').textContent = diagnostic.detail || runtime.message || '正在等待更多信息。';
-  $('#diagnosticAction').textContent = diagnostic.action || '查看受控 Edge 与实时事件。';
+  $('#diagnosticAction').textContent = diagnostic.action || '查看受控浏览器与实时事件。';
   $('#diagnosticTechnical').textContent = JSON.stringify({
     diagnostic,
     runtime: {
       running: runtime.running,
       browser: runtime.browser,
+      browserName: runtime.browserName,
       browserTabs: runtime.browserTabs,
       login: runtime.login,
       page: runtime.page,
@@ -110,8 +111,8 @@ function renderDiagnostic(runtime, courses) {
     })),
   }, null, 2);
 
-  setHealthStep('#healthBrowser', runtime.browser === 'open' ? 'ok' : runtime.running ? 'warn' : '', runtime.browser === 'open' ? `已打开 · ${runtime.browserTabs ?? 1} 个页面` : runtime.running ? '正在打开' : '尚未启动');
-  setHealthStep('#healthLogin', runtime.login === 'ok' ? 'ok' : ['manual', 'recovering'].includes(runtime.login) ? 'warn' : '', ({ ok: '登录有效', manual: '等待人工认证', recovering: '自动恢复中' })[runtime.login] || '等待浏览器');
+  setHealthStep('#healthBrowser', runtime.browser === 'open' ? 'ok' : runtime.running ? 'warn' : '', runtime.browser === 'open' ? `${runtime.browserName || '浏览器'} · ${runtime.browserTabs ?? 1} 个页面` : runtime.running ? '正在打开' : '尚未启动');
+  setHealthStep('#healthLogin', runtime.login === 'ok' ? 'ok' : runtime.login === 'denied' ? 'error' : ['manual', 'recovering'].includes(runtime.login) ? 'warn' : '', ({ ok: '登录有效', manual: '等待人工认证', recovering: '自动恢复中', denied: '学校未授权' })[runtime.login] || '等待浏览器');
   setHealthStep('#healthPage', ['all-courses', 'selection'].includes(runtime.page) ? 'ok' : runtime.login === 'ok' ? 'warn' : '', ({ 'all-courses': '全校课程已就绪', selection: '选课系统已进入' })[runtime.page] || '尚未进入');
   const courseDiagnostic = courses.find(course => course.lastResult?.diagnostic)?.lastResult?.diagnostic;
   setHealthStep('#healthCourse', courseDiagnostic?.level || (runtime.lastCheckAt ? 'ok' : ''), runtime.lastCheckAt ? (courseDiagnostic?.title || '已收到课程数据') : '尚未检测');
@@ -121,7 +122,7 @@ function renderState(next) {
   state = next;
   const runtime = state.runtime || {};
   $('#runtimeStatus').textContent = runtime.running ? '运行中' : '已停止';
-  $('#loginStatus').textContent = ({ ok: '正常', manual: '需人工', recovering: '恢复中', unknown: '未知' })[runtime.login] || runtime.login;
+  $('#loginStatus').textContent = ({ ok: '正常', manual: '需人工', recovering: '恢复中', denied: '未授权', unknown: '未知' })[runtime.login] || runtime.login;
   $('#queueCount').textContent = state.courses.length;
   $('#startButton').disabled = runtime.running;
   $('#stopButton').disabled = !runtime.running;

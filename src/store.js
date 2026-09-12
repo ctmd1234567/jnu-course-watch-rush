@@ -52,15 +52,21 @@ class Store {
 
   save() {
     fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
-    const tempPath = `${this.filePath}.tmp`;
+    const tempPath = `${this.filePath}.${process.pid}.${Date.now()}.tmp`;
     fs.writeFileSync(tempPath, `${JSON.stringify(this.state, null, 2)}\n`, 'utf8');
     try {
       fs.renameSync(tempPath, this.filePath);
     } catch (error) {
-      if (error.code !== 'EXDEV') throw error;
-      // 某些 Windows/Electron 环境会把同目录原子替换误判为跨设备移动。
-      fs.copyFileSync(tempPath, this.filePath);
-      fs.unlinkSync(tempPath);
+      if (!['EXDEV', 'EPERM', 'EACCES', 'EBUSY', 'EEXIST'].includes(error.code)) throw error;
+      // Windows、杀毒软件或同步盘可能短暂锁住现有文件，导致原子替换失败。
+      // copyFileSync 会覆盖目标文件，成功后再删除临时文件；失败则保留临时文件供诊断。
+      try {
+        fs.copyFileSync(tempPath, this.filePath);
+        fs.unlinkSync(tempPath);
+      } catch (fallbackError) {
+        fallbackError.message = `无法保存任务状态（${fallbackError.code || 'UNKNOWN'}）：${fallbackError.message}`;
+        throw fallbackError;
+      }
     }
   }
 

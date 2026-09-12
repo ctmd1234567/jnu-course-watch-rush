@@ -1,7 +1,7 @@
 {
   "name": "jnu-course-watch-rush",
   "productName": "JNU Course Watch & Rush",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "暨南大学全自动蹲课与定时抢课桌面助手",
   "author": "ctmd1234567",
@@ -48,9 +48,11 @@
       "electron-main.js",
       "src/**/*",
       "public/**/*",
+      "build/icon.png",
       "package.json"
     ],
     "win": {
+      "icon": "build/icon.png",
       "target": [
         "nsis",
         "portable"

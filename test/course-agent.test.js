@@ -13,6 +13,9 @@ const {
   isCreditLimitMessage,
   isLoginGuideUrl,
   isCourseSearchResponse,
+  isAccessDeniedMessage,
+  executableFromOpenCommand,
+  isChromiumExecutable,
 } = require('../src/course-agent');
 
 test('parses available selected/capacity text', () => {
@@ -144,6 +147,17 @@ test('runtime-added rush task gets one entry-phase preheat in the current sessio
 test('recognizes the fixed JNU login guide without matching the authentication page', () => {
   assert.equal(isLoginGuideUrl('https://netc.jnu.edu.cn/2020/1124/c10374a565499/page.htm'), true);
   assert.equal(isLoginGuideUrl('https://authserver.jnu.edu.cn/authserver/login'), false);
+});
+
+test('recognizes school access denial separately from manual authentication', () => {
+  assert.equal(isAccessDeniedMessage('未获得本系统访问授权'), true);
+  assert.equal(isAccessDeniedMessage('请输入账号和验证码'), false);
+});
+
+test('extracts only controllable Chromium executables from Windows default browser commands', () => {
+  assert.equal(executableFromOpenCommand('"C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe" --single-argument %1'), 'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe');
+  assert.equal(isChromiumExecutable('C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'), true);
+  assert.equal(isChromiumExecutable('C:\\Program Files\\Mozilla Firefox\\firefox.exe'), false);
 });
 
 test('matches only the official JNU course search POST response', () => {

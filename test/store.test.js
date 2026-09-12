@@ -22,7 +22,28 @@ test('falls back to copy when Windows reports EXDEV during state replacement', (
     fs.renameSync = originalRename;
   }
   assert.equal(JSON.parse(fs.readFileSync(filePath, 'utf8')).courses[0].id, 'saved-course');
-  assert.equal(fs.existsSync(`${filePath}.tmp`), false);
+  assert.equal(fs.readdirSync(directory).some(name => name.endsWith('.tmp')), false);
+  fs.rmSync(directory, { recursive: true, force: true });
+});
+
+test('falls back to copy when Windows temporarily denies state replacement', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'jnu-store-locked-'));
+  const filePath = path.join(directory, 'state.json');
+  const store = new Store(filePath);
+  store.state.courses.push({ id: 'locked-course', courseNumber: '08060230' });
+  const originalRename = fs.renameSync;
+  fs.renameSync = () => {
+    const error = new Error('operation not permitted');
+    error.code = 'EPERM';
+    throw error;
+  };
+  try {
+    store.save();
+  } finally {
+    fs.renameSync = originalRename;
+  }
+  assert.equal(JSON.parse(fs.readFileSync(filePath, 'utf8')).courses[0].id, 'locked-course');
+  assert.equal(fs.readdirSync(directory).some(name => name.endsWith('.tmp')), false);
   fs.rmSync(directory, { recursive: true, force: true });
 });
 
