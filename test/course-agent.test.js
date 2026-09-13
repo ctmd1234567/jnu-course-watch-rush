@@ -166,9 +166,54 @@ test('matches only the official JNU course search POST response', () => {
     request: () => ({ method: () => method, resourceType: () => type }),
   });
   assert.equal(isCourseSearchResponse(response('https://jwxk.jnu.edu.cn/xsxkapp/sys/xsxkapp/elective/queryCourse.do')), true);
+  assert.equal(isCourseSearchResponse(response('https://yjsxk.jnu.edu.cn/yjsxkapp/sys/xsxkapp/elective/queryCourse.do'), 'yjsxk.jnu.edu.cn'), true);
+  assert.equal(isCourseSearchResponse(response('https://jwxk.jnu.edu.cn/xsxkapp/sys/xsxkapp/elective/queryCourse.do'), 'yjsxk.jnu.edu.cn'), false);
   assert.equal(isCourseSearchResponse(response('https://jwxk.jnu.edu.cn/xsxkapp/sys/xsxkapp/elective/addVolunteer.do')), false);
   assert.equal(isCourseSearchResponse(response('https://example.com/sys/xsxkapp/elective/queryCourse.do')), false);
   assert.equal(isCourseSearchResponse(response('https://jwxk.jnu.edu.cn/xsxkapp/sys/xsxkapp/elective/queryCourse.do', 'GET')), false);
+});
+
+test('uses separate entry URLs and browser profiles for the two systems', () => {
+  const store = { state: { settings: { portal: 'standard' } }, snapshot: () => ({ settings: {}, courses: [], completed: [] }) };
+  const agent = new CourseAgent({ store, profileDir: 'C:\\runtime\\browser-profile', emit: () => {} });
+  assert.equal(agent.portalConfig().hostname, 'jwxk.jnu.edu.cn');
+  assert.equal(agent.activeProfileDir(), 'C:\\runtime\\browser-profile');
+  store.state.settings.portal = 'freshman';
+  assert.equal(agent.portalConfig().hostname, 'yjsxk.jnu.edu.cn');
+  assert.match(agent.portalConfig().startUrl, /\/yjsxkapp\/sys\/xsxkapp\/index\.html$/);
+  assert.equal(agent.activeProfileDir(), 'C:\\runtime\\browser-profile-freshman');
+});
+
+test('watch mode reloads the page before reading fresh course data', async () => {
+  const store = { state: { settings: { portal: 'standard' } }, snapshot: () => ({ settings: {}, courses: [], completed: [] }) };
+  const agent = new CourseAgent({ store, profileDir: '', emit: () => {} });
+  let reloads = 0;
+  agent.page = { reload: async () => { reloads += 1; } };
+  agent.isSelectionApp = async () => true;
+  agent.selectionReady = true;
+  agent.selectionGeneration = 4;
+  agent.rushWarmups.set('rush-1', { generation: 4 });
+  agent.entryWarmupAttempts.set('rush-1', 4);
+  await agent.refreshWatchCourseData();
+  assert.equal(reloads, 1);
+  assert.equal(agent.runtime.login, 'ok');
+  assert.equal(agent.selectionGeneration, 5);
+  assert.equal(agent.rushWarmups.size, 0);
+  assert.equal(agent.entryWarmupAttempts.size, 0);
+});
+
+test('login recovery reopens the selected portal even from a stale same-domain page', async () => {
+  const store = { state: { settings: { portal: 'freshman' } }, snapshot: () => ({ settings: {}, courses: [], completed: [] }) };
+  const agent = new CourseAgent({ store, profileDir: '', emit: () => {} });
+  agent.running = true;
+  agent.accessDeniedText = async () => '';
+  agent.isSelectionApp = async () => false;
+  agent.enterSelectionIfNeeded = async () => true;
+  agent.clickFirstVisible = async () => false;
+  let opened = '';
+  agent.page = { url: () => 'https://yjsxk.jnu.edu.cn/yjsxkapp/stale', goto: async url => { opened = url; } };
+  assert.equal(await agent.recoverLogin(), true);
+  assert.equal(opened, 'https://yjsxk.jnu.edu.cn/yjsxkapp/sys/xsxkapp/index.html');
 });
 
 test('does not complete a task that was deleted while an async check was running', () => {

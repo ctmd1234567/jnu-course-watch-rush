@@ -3,12 +3,25 @@ const path = require('node:path');
 const { execFileSync, spawn } = require('node:child_process');
 const { chromium } = require('playwright-core');
 
-const START_URL = 'https://jwxk.jnu.edu.cn/';
+const PORTALS = Object.freeze({
+  standard: {
+    id: 'standard',
+    label: '原选课系统',
+    hostname: 'jwxk.jnu.edu.cn',
+    startUrl: 'https://jwxk.jnu.edu.cn/',
+  },
+  freshman: {
+    id: 'freshman',
+    label: '新生选课系统',
+    hostname: 'yjsxk.jnu.edu.cn',
+    startUrl: 'https://yjsxk.jnu.edu.cn/yjsxkapp/sys/xsxkapp/index.html',
+  },
+});
 const WATCH_ACTION_GAP_MS = 1_500;
 const DEFAULT_TIMEOUT = 15_000;
 const RUSH_READINESS_REFRESH_MS = 20_000;
 const RUSH_WARMUP_LEAD_MS = 30_000;
-const LOGIN_ENTRY_NAME = /^(登录|统一认证|统一认证登录|登录选课系统|进入系统|进入选课系统)$/;
+const LOGIN_ENTRY_NAME = /^(?:登\s*录|统一认证|统一认证登录|登录选课系统|进入系统|进入选课系统)$/;
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const safeUrl = value => String(value || '').replace(/[?#].*$/, '');
@@ -113,13 +126,13 @@ function findDefaultChromiumBrowser() {
   }
 }
 
-function isCourseSearchResponse(response) {
+function isCourseSearchResponse(response, expectedHostname = PORTALS.standard.hostname) {
   try {
     const request = response.request();
     const url = new URL(response.url());
     return ['xhr', 'fetch'].includes(request.resourceType()) &&
       request.method() === 'POST' &&
-      url.hostname === 'jwxk.jnu.edu.cn' &&
+      url.hostname === expectedHostname &&
       /\/sys\/xsxkapp\/elective\/queryCourse\.do$/i.test(url.pathname);
   } catch (_) {
     return false;
@@ -222,6 +235,14 @@ class CourseAgent {
     return { ...this.store.snapshot(), runtime: { ...this.runtime } };
   }
 
+  portalConfig() {
+    return PORTALS[this.store.state.settings.portal] || PORTALS.standard;
+  }
+
+  activeProfileDir() {
+    return this.portalConfig().id === 'standard' ? this.profileDir : `${this.profileDir}-${this.portalConfig().id}`;
+  }
+
   updateRuntime(patch) {
     Object.assign(this.runtime, patch);
     this.emit('state', this.publicState());
@@ -309,7 +330,8 @@ class CourseAgent {
   }
 
   clearBrowserSessionRestore() {
-    const roots = [this.profileDir, path.join(this.profileDir, 'Default')];
+    const profileDir = this.activeProfileDir();
+    const roots = [profileDir, path.join(profileDir, 'Default')];
     const legacyNames = ['Current Session', 'Current Tabs', 'Last Session', 'Last Tabs'];
     let removed = 0;
     for (const root of roots) {
@@ -363,9 +385,11 @@ class CourseAgent {
     const browser = this.findBrowser();
     if (!browser) throw new Error('找不到 Playwright 可控制的 Chromium 浏览器（建议安装 Microsoft Edge）');
     const { executablePath } = browser;
-    fs.mkdirSync(this.profileDir, { recursive: true });
+    const portal = this.portalConfig();
+    const activeProfileDir = this.activeProfileDir();
+    fs.mkdirSync(activeProfileDir, { recursive: true });
     this.clearBrowserSessionRestore();
-    this.context = await chromium.launchPersistentContext(this.profileDir, {
+    this.context = await chromium.launchPersistentContext(activeProfileDir, {
       executablePath,
       headless: false,
       chromiumSandbox: true,
@@ -435,9 +459,9 @@ class CourseAgent {
         this.updateRuntime({ browserTabs: this.context.pages().filter(page => !page.isClosed()).length });
       }).catch(() => {});
     });
-    this.log('info', `使用${browser.source}：${browser.label}`, { executablePath });
-    this.updateRuntime({ browser: 'open', browserName: browser.label, browserTabs: 1, message: `${browser.label} 已打开` });
-    await this.page.goto(START_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 }).catch(error => {
+    this.log('info', `使用${browser.source}：${browser.label}，入口：${portal.label}`, { executablePath, startUrl: portal.startUrl });
+    this.updateRuntime({ browser: 'open', browserName: browser.label, portal: portal.id, portalLabel: portal.label, browserTabs: 1, message: `${browser.label} 已打开` });
+    await this.page.goto(portal.startUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 }).catch(error => {
       this.log('warn', `首次打开入口失败，稍后重试: ${error.message}`);
       this.setDiagnostic('site_network', error.message);
     });
@@ -498,6 +522,7 @@ class CourseAgent {
   }
 
   async recoverLogin() {
+    const portal = this.portalConfig();
     const initialDenied = await this.accessDeniedText();
     if (initialDenied) {
       this.haltForAccessDenied(initialDenied);
@@ -511,9 +536,9 @@ class CourseAgent {
 
     this.markSelectionUnavailable('未检测到有效选课页面');
     this.updateRuntime({ login: 'recovering', message: '正在恢复登录', diagnostic: makeDiagnostic('auth_recovering') });
-    if (!this.page.url().startsWith(START_URL)) {
-      await this.page.goto(START_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 }).catch(() => {});
-    }
+    // 页面外壳可能仍停留在选课域名，但后台 Session 已失效；必须重新打开入口，
+    // 不能只根据 URL 前缀判断仍处于有效系统。
+    await this.page.goto(portal.startUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 }).catch(() => {});
     await this.clickFirstVisible([
       frame => frame.getByRole('button', { name: LOGIN_ENTRY_NAME }),
       frame => frame.getByRole('link', { name: LOGIN_ENTRY_NAME }),
@@ -665,7 +690,10 @@ class CourseAgent {
     const bodySelector = split ? '#splitSchoolBody' : '#schoolBody';
     const body = this.page.locator(bodySelector);
     const before = await body.innerHTML().catch(() => '');
-    const queryResponse = this.page.waitForResponse(isCourseSearchResponse, { timeout: 8_000 })
+    const queryResponse = this.page.waitForResponse(
+      response => isCourseSearchResponse(response, this.portalConfig().hostname),
+      { timeout: 8_000 },
+    )
       .then(async response => {
         const payload = await response.json().catch(() => null);
         return { type: 'response', ok: response.ok(), status: response.status(), signals: responseSignals(payload) };
@@ -790,7 +818,7 @@ class CourseAgent {
       try {
         const request = response.request();
         if (!['xhr', 'fetch'].includes(request.resourceType())) return;
-        if (!/jwxk\.jnu\.edu\.cn$/i.test(new URL(response.url()).hostname)) return;
+        if (new URL(response.url()).hostname !== this.portalConfig().hostname) return;
         const payload = await response.json();
         for (const signal of responseSignals(payload)) {
           networkEvidence.push({
@@ -1113,11 +1141,36 @@ class CourseAgent {
     return this.checkWatchCourse(course);
   }
 
+  async refreshWatchCourseData() {
+    if (!await this.isSelectionApp()) {
+      this.markSelectionUnavailable('蹲课刷新前页面已失效');
+      this.updateRuntime({ login: 'unknown' });
+      if (!await this.recoverLogin()) throw new Error('登录状态失效：无法恢复选课页面');
+    }
+
+    this.updateRuntime({ message: '蹲课：正在刷新最新课程数据' });
+    this.markSelectionUnavailable('蹲课每轮主动刷新页面');
+    const reloadError = await this.page.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 })
+      .then(() => null)
+      .catch(error => error);
+    await sleep(700);
+
+    if (!await this.isSelectionApp()) {
+      this.updateRuntime({ login: 'unknown' });
+      if (!await this.recoverLogin()) throw new Error('登录状态失效：刷新后无法恢复选课页面');
+    } else {
+      this.markSelectionReady('蹲课页面刷新完成');
+      this.updateRuntime({ login: 'ok', page: 'selection' });
+      if (reloadError) this.log('warn', `页面刷新等待超时，但选课页面已恢复，继续搜索: ${reloadError.message}`);
+    }
+  }
+
   async checkWatchCourse(course) {
     this.updateRuntime({ currentCourseId: course.id, lastCheckAt: nowIso(), message: `正在检查 ${course.courseNumber}` });
     course.status = 'checking';
     course.lastError = null;
     this.store.save();
+    await this.refreshWatchCourseData();
     const search = await this.searchCourse(course);
     if (!this.store.state.courses.some(item => item.id === course.id)) return;
     const matches = search.matches;

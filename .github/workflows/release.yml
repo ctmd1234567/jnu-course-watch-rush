@@ -1,0 +1,101 @@
+name: Build and publish Windows release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - package.json
+      - .github/workflows/release.yml
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Read release tag
+        id: version
+        shell: pwsh
+        run: |
+          $version = node -p "require('./package.json').version"
+          $tag = "v$version"
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+
+      - name: Check whether release already exists
+        id: existing
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) {
+            "exists=true" >> $env:GITHUB_OUTPUT
+          } else {
+            "exists=false" >> $env:GITHUB_OUTPUT
+          }
+
+      - name: Install dependencies
+        if: steps.existing.outputs.exists != 'true'
+        run: npm ci
+
+      - name: Verify source
+        if: steps.existing.outputs.exists != 'true'
+        run: npm run check && npm test
+
+      - name: Build Windows packages
+        if: steps.existing.outputs.exists != 'true'
+        run: npm run build:win
+
+      - name: Remove superseded broken v0.2.1 release
+        if: steps.existing.outputs.exists != 'true' && steps.version.outputs.tag == 'v0.3.0'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete v0.2.1 --repo $env:GITHUB_REPOSITORY --cleanup-tag --yes
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "v0.2.1 does not exist or was already removed."
+          }
+          exit 0
+
+      - name: Publish release
+        if: steps.existing.outputs.exists != 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $notes = @"
+          ## 重要说明
+
+          - **新生选课系统仅为测试支持，不保证大一学生可用。** 目前没有使用具备权限的大一账号完成真实选课全流程验证。
+          - 原选课系统继续作为默认入口；两个系统使用互相独立的登录状态。
+
+          ## 0.3.0 更新
+
+          - 增加原选课系统与新生选课系统入口选择。
+          - 修复蹲课必须人工刷新后才出现结果的问题；现在每轮主动刷新课程页面并重新搜索。
+          - Session 失效后按当前入口自动恢复登录和“开始选课”。
+          - 修复设置保存失败后前端状态可能与后台不一致的问题。
+          - 保留抢课预热、学分上限停止、单受控页面和真实诊断结果。
+
+          请优先下载安装版。程序不是暨南大学官方产品，使用前请确认学校规则。
+          "@
+          gh release create $env:RELEASE_TAG `
+            "dist/JNU-Course-Watch-Rush-Setup-$env:RELEASE_VERSION-x64.exe" `
+            "dist/JNU-Course-Watch-Rush-Portable-$env:RELEASE_VERSION-x64.exe" `
+            --repo $env:GITHUB_REPOSITORY `
+            --title "JNU Course Watch & Rush $env:RELEASE_VERSION" `
+            --notes $notes `
+            --latest

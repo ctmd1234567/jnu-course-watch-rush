@@ -3,6 +3,7 @@ const path = require('node:path');
 
 const DEFAULT_STATE = {
   settings: {
+    portal: 'standard',
     watchMinSeconds: 20,
     watchMaxSeconds: 30,
     rushActionGapMs: 0,
@@ -30,6 +31,7 @@ class Store {
       const savedSettings = saved.settings || {};
       this.state = {
         settings: {
+          portal: ['standard', 'freshman'].includes(savedSettings.portal) ? savedSettings.portal : DEFAULT_STATE.settings.portal,
           watchMinSeconds: savedSettings.watchMinSeconds ?? DEFAULT_STATE.settings.watchMinSeconds,
           watchMaxSeconds: savedSettings.watchMaxSeconds ?? DEFAULT_STATE.settings.watchMaxSeconds,
           rushActionGapMs: Math.max(0, Number(savedSettings.rushActionGapMs) || 0),

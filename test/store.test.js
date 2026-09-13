@@ -61,7 +61,18 @@ test('uses safe defaults when the state file is malformed', () => {
   }
   assert.deepEqual(store.state.courses, []);
   assert.equal(store.state.settings.watchMinSeconds, 20);
+  assert.equal(store.state.settings.portal, 'standard');
   store.save();
   assert.deepEqual(JSON.parse(fs.readFileSync(filePath, 'utf8')).courses, []);
+  fs.rmSync(directory, { recursive: true, force: true });
+});
+
+test('persists the selected course system portal', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'jnu-store-portal-'));
+  const filePath = path.join(directory, 'state.json');
+  const store = new Store(filePath);
+  store.state.settings.portal = 'freshman';
+  store.save();
+  assert.equal(new Store(filePath).state.settings.portal, 'freshman');
   fs.rmSync(directory, { recursive: true, force: true });
 });

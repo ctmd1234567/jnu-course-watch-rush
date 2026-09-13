@@ -126,7 +126,11 @@ input[type="datetime-local"] {
   display: block; width: 100%; margin-top: 8px; padding: 12px 13px; color: var(--ink); outline: none;
   background: rgba(4, 14, 30, .72); border: 1px solid var(--line); border-radius: 11px;
 }
-input:focus { border-color: rgba(69, 224, 202, .65); box-shadow: 0 0 0 3px rgba(69, 224, 202, .08); }
+.portal-select select {
+  display: block; width: 100%; margin-top: 10px; padding: 12px 13px; color: var(--ink); outline: none;
+  background: rgba(4, 14, 30, .72); border: 1px solid var(--line); border-radius: 11px;
+}
+input:focus, select:focus { border-color: rgba(69, 224, 202, .65); box-shadow: 0 0 0 3px rgba(69, 224, 202, .08); }
 fieldset { grid-column: 1 / -1; border: 0; padding: 0; margin: 3px 0 0; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 fieldset legend { margin-bottom: 8px; }
 .mode-card { position: relative; display: flex; align-items: center; gap: 11px; padding: 13px; border: 1px solid var(--line); border-radius: 12px; background: rgba(4, 14, 30, .5); cursor: pointer; }

@@ -117,6 +117,16 @@
       </div>
       <form id="settingsForm" class="settings-form">
         <div class="setting-block">
+          <div class="setting-title"><span class="dot teal"></span><strong>选课系统入口</strong><small>切换前请先停止任务</small></div>
+          <label class="portal-select">
+            <select name="portal">
+              <option value="standard">原选课系统（jwxk.jnu.edu.cn）</option>
+              <option value="freshman">新生选课系统（测试，不保证可用）</option>
+            </select>
+          </label>
+          <p>两个入口分别保存登录状态。新生入口尚未使用具备权限的大一账号完成真实流程验证，仅供测试，不保证可用；其他学生默认使用原系统。</p>
+        </div>
+        <div class="setting-block">
           <div class="setting-title"><span class="dot teal"></span><strong>蹲课随机间隔</strong><small>建议 20–30 秒</small></div>
           <div class="range-pair">
             <label><span>最短</span><div><input type="number" name="watchMinSeconds" min="15" max="180"><b>秒</b></div></label>

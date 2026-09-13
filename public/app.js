@@ -35,10 +35,10 @@ function showCourseFormMessage(message = '') {
   element.hidden = !message;
 }
 
-async function resyncStateAfterError() {
+async function resyncStateAfterError(forceSettings = false) {
   try {
     const latest = await api('/api/state');
-    renderState(latest);
+    renderState(latest, { forceSettings });
     return true;
   } catch (_) {
     return false;
@@ -118,7 +118,7 @@ function renderDiagnostic(runtime, courses) {
   setHealthStep('#healthCourse', courseDiagnostic?.level || (runtime.lastCheckAt ? 'ok' : ''), runtime.lastCheckAt ? (courseDiagnostic?.title || '已收到课程数据') : '尚未检测');
 }
 
-function renderState(next) {
+function renderState(next, { forceSettings = false } = {}) {
   state = next;
   const runtime = state.runtime || {};
   $('#runtimeStatus').textContent = runtime.running ? '运行中' : '已停止';
@@ -130,13 +130,15 @@ function renderState(next) {
   renderDiagnostic(runtime, state.courses);
   const settings = state.settings;
   const form = $('#settingsForm');
-  if (document.activeElement?.form !== form) {
+  if (forceSettings || document.activeElement?.form !== form) {
+    form.elements.portal.value = settings.portal || 'standard';
     form.watchMinSeconds.value = settings.watchMinSeconds;
     form.watchMaxSeconds.value = settings.watchMaxSeconds;
     form.rushActionGapMs.value = settings.rushActionGapMs ?? 0;
     form.autoConfirm.checked = settings.autoConfirm;
     form.autoPickExperiment.checked = settings.autoPickExperiment;
   }
+  form.elements.portal.disabled = runtime.running;
 
   const tbody = $('#courseRows');
   tbody.replaceChildren(...state.courses.map(course => {
@@ -211,6 +213,7 @@ $('#settingsForm').addEventListener('submit', async event => {
     const next = await api('/api/settings', {
       method: 'PATCH',
       body: JSON.stringify({
+        portal: form.elements.portal.value,
         watchMinSeconds: Number(form.watchMinSeconds.value),
         watchMaxSeconds: Number(form.watchMaxSeconds.value),
         rushActionGapMs: Number(form.rushActionGapMs.value),
@@ -220,7 +223,14 @@ $('#settingsForm').addEventListener('submit', async event => {
     });
     renderState(next);
     toast('设置已保存');
-  } catch (error) { toast(error.message, true); }
+  } catch (error) {
+    await resyncStateAfterError(true);
+    toast(`设置保存失败：${error.message}`, true);
+  }
+});
+
+$('#settingsForm').elements.portal.addEventListener('change', event => {
+  if (!event.currentTarget.disabled) event.currentTarget.form.requestSubmit();
 });
 
 $('#startButton').addEventListener('click', async () => {

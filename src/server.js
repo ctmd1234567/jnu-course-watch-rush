@@ -119,23 +119,37 @@ app.delete('/api/courses/:id', (request, response) => {
 });
 
 app.patch('/api/settings', (request, response) => {
+  const portal = String(request.body.portal || 'standard');
   const watchMinSeconds = Number(request.body.watchMinSeconds);
   const watchMaxSeconds = Number(request.body.watchMaxSeconds);
   const rushActionGapMs = Math.max(0, Number(request.body.rushActionGapMs) || 0);
+  if (!['standard', 'freshman'].includes(portal)) {
+    return response.status(400).json({ error: '请选择有效的选课系统入口' });
+  }
+  if (agent.runtime.running && portal !== store.state.settings.portal) {
+    return response.status(409).json({ error: '请先停止任务，再切换选课系统入口' });
+  }
   if (!Number.isFinite(watchMinSeconds) || watchMinSeconds < 15 || watchMinSeconds > 180) {
     return response.status(400).json({ error: '蹲课最短间隔必须为 15–180 秒' });
   }
   if (!Number.isFinite(watchMaxSeconds) || watchMaxSeconds < watchMinSeconds || watchMaxSeconds > 180) {
     return response.status(400).json({ error: '蹲课最长间隔必须不小于最短间隔，且不超过 180 秒' });
   }
+  const previousSettings = store.state.settings;
   store.state.settings = {
+    portal,
     watchMinSeconds,
     watchMaxSeconds,
     rushActionGapMs,
     autoConfirm: request.body.autoConfirm !== false,
     autoPickExperiment: request.body.autoPickExperiment === true,
   };
-  store.save();
+  try {
+    store.save();
+  } catch (error) {
+    store.state.settings = previousSettings;
+    throw error;
+  }
   broadcast('state', agent.publicState());
   sendState(response);
 });
