@@ -55,7 +55,7 @@ jobs:
 
       - name: Build Windows packages
         if: steps.existing.outputs.exists != 'true'
-        run: npm run build:win
+        run: npm run build:win -- --publish never
 
       - name: Remove superseded broken v0.2.1 release
         if: steps.existing.outputs.exists != 'true' && steps.version.outputs.tag == 'v0.3.0'
