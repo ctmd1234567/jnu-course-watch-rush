@@ -71,8 +71,19 @@ test('persists the selected course system portal', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'jnu-store-portal-'));
   const filePath = path.join(directory, 'state.json');
   const store = new Store(filePath);
-  store.state.settings.portal = 'freshman';
+  store.state.settings.portal = 'graduate';
   store.save();
-  assert.equal(new Store(filePath).state.settings.portal, 'freshman');
+  assert.equal(new Store(filePath).state.settings.portal, 'graduate');
+  fs.rmSync(directory, { recursive: true, force: true });
+});
+
+test('migrates the legacy freshman portal to graduate', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'jnu-store-legacy-portal-'));
+  const filePath = path.join(directory, 'state.json');
+  fs.writeFileSync(filePath, JSON.stringify({ settings: { portal: 'freshman' } }), 'utf8');
+  const store = new Store(filePath);
+  assert.equal(store.state.settings.portal, 'graduate');
+  store.save();
+  assert.equal(JSON.parse(fs.readFileSync(filePath, 'utf8')).settings.portal, 'graduate');
   fs.rmSync(directory, { recursive: true, force: true });
 });

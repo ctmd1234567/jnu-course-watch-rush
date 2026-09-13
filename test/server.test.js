@@ -66,13 +66,13 @@ test('allows duplicate course tasks and returns both to the frontend', async () 
     });
     assert.equal(invalidPortal.status, 400);
 
-    const freshmanSettings = await fetch(`http://127.0.0.1:${service.port}/api/settings`, {
+    const graduateSettings = await fetch(`http://127.0.0.1:${service.port}/api/settings`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', Connection: 'close' },
-      body: JSON.stringify({ portal: 'freshman', watchMinSeconds: 20, watchMaxSeconds: 30, rushActionGapMs: 0 }),
+      body: JSON.stringify({ portal: 'graduate', watchMinSeconds: 20, watchMaxSeconds: 30, rushActionGapMs: 0 }),
     });
-    assert.equal(freshmanSettings.status, 200);
-    assert.equal((await freshmanSettings.json()).settings.portal, 'freshman');
+    assert.equal(graduateSettings.status, 200);
+    assert.equal((await graduateSettings.json()).settings.portal, 'graduate');
 
     service.agent.runtime.running = true;
     const portalChangeWhileRunning = await fetch(`http://127.0.0.1:${service.port}/api/settings`, {
@@ -87,7 +87,7 @@ test('allows duplicate course tasks and returns both to the frontend', async () 
     const stateAfterRejectedPortalChange = await fetch(`http://127.0.0.1:${service.port}/api/state`, {
       headers: { Connection: 'close' },
     });
-    assert.equal((await stateAfterRejectedPortalChange.json()).settings.portal, 'freshman');
+    assert.equal((await stateAfterRejectedPortalChange.json()).settings.portal, 'graduate');
 
     const missingDelete = await fetch(`http://127.0.0.1:${service.port}/api/courses/not-found`, {
       method: 'DELETE',

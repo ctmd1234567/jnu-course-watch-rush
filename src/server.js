@@ -119,11 +119,12 @@ app.delete('/api/courses/:id', (request, response) => {
 });
 
 app.patch('/api/settings', (request, response) => {
-  const portal = String(request.body.portal || 'standard');
+  const requestedPortal = String(request.body.portal || 'standard');
+  const portal = requestedPortal === 'freshman' ? 'graduate' : requestedPortal;
   const watchMinSeconds = Number(request.body.watchMinSeconds);
   const watchMaxSeconds = Number(request.body.watchMaxSeconds);
   const rushActionGapMs = Math.max(0, Number(request.body.rushActionGapMs) || 0);
-  if (!['standard', 'freshman'].includes(portal)) {
+  if (!['standard', 'graduate'].includes(portal)) {
     return response.status(400).json({ error: '请选择有效的选课系统入口' });
   }
   if (agent.runtime.running && portal !== store.state.settings.portal) {

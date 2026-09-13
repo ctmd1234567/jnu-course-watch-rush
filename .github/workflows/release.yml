@@ -57,18 +57,6 @@ jobs:
         if: steps.existing.outputs.exists != 'true'
         run: npm run build:win -- --publish never
 
-      - name: Remove superseded broken v0.2.1 release
-        if: steps.existing.outputs.exists != 'true' && steps.version.outputs.tag == 'v0.3.0'
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release delete v0.2.1 --repo $env:GITHUB_REPOSITORY --cleanup-tag --yes
-          if ($LASTEXITCODE -ne 0) {
-            Write-Host "v0.2.1 does not exist or was already removed."
-          }
-          exit 0
-
       - name: Publish release
         if: steps.existing.outputs.exists != 'true'
         shell: pwsh
@@ -80,16 +68,16 @@ jobs:
           $notes = @"
           ## 重要说明
 
-          - **新生选课系统仅为测试支持，不保证大一学生可用。** 目前没有使用具备权限的大一账号完成真实选课全流程验证。
-          - 原选课系统继续作为默认入口；两个系统使用互相独立的登录状态。
+          - **研究生选课系统只是尽力兼容且未经研究生账号验证，大概率不可用。** 页面、参数或提交函数不同时会失败。
+          - 原选课系统继续作为默认入口；两个系统使用互相独立的登录状态和 adapter。
 
-          ## 0.3.0 更新
+          ## 0.4.0 更新
 
-          - 增加原选课系统与新生选课系统入口选择。
-          - 修复蹲课必须人工刷新后才出现结果的问题；现在每轮主动刷新课程页面并重新搜索。
-          - Session 失效后按当前入口自动恢复登录和“开始选课”。
-          - 修复设置保存失败后前端状态可能与后台不一致的问题。
-          - 保留抢课预热、学分上限停止、单受控页面和真实诊断结果。
+          - 将原“新生选课系统”准确改名为“研究生选课系统”，并迁移旧配置。
+          - 研究生入口按相似 xsxkapp 框架尽力复用页面识别、搜索、选择确认与抢课预热。
+          - 研究生未知页面不再误报人工认证，并可复制严格脱敏的页面与网络诊断。
+          - 修复同一课程号结果过多时只检查第一页、找不到后续教学班的问题。
+          - 保留原选课系统既有流程，并按当前入口隔离域名、会话与适配器。
 
           请优先下载安装版。程序不是暨南大学官方产品，使用前请确认学校规则。
           "@
@@ -100,3 +88,17 @@ jobs:
             --title "JNU Course Watch & Rush $env:RELEASE_VERSION" `
             --notes $notes `
             --latest
+
+      - name: Remove superseded releases
+        if: steps.existing.outputs.exists != 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          foreach ($tag in @('v0.2.0', 'v0.3.0')) {
+            gh release delete $tag --repo $env:GITHUB_REPOSITORY --cleanup-tag --yes
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host "$tag does not exist or was already removed."
+            }
+          }
+          exit 0

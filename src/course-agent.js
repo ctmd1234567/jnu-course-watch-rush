@@ -10,11 +10,12 @@ const PORTALS = Object.freeze({
     hostname: 'jwxk.jnu.edu.cn',
     startUrl: 'https://jwxk.jnu.edu.cn/',
   },
-  freshman: {
-    id: 'freshman',
-    label: '新生选课系统',
+  graduate: {
+    id: 'graduate',
+    label: '研究生选课系统',
     hostname: 'yjsxk.jnu.edu.cn',
     startUrl: 'https://yjsxk.jnu.edu.cn/yjsxkapp/sys/xsxkapp/index.html',
+    legacyProfileId: 'freshman',
   },
 });
 const WATCH_ACTION_GAP_MS = 1_500;
@@ -24,7 +25,89 @@ const RUSH_WARMUP_LEAD_MS = 30_000;
 const LOGIN_ENTRY_NAME = /^(?:登\s*录|统一认证|统一认证登录|登录选课系统|进入系统|进入选课系统)$/;
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-const safeUrl = value => String(value || '').replace(/[?#].*$/, '');
+const safeUrl = value => {
+  try {
+    const url = new URL(String(value || ''));
+    return `${url.protocol}//${url.host}${url.pathname}`;
+  } catch (_) {
+    return String(value || '').replace(/[?#].*$/, '');
+  }
+};
+
+const SAFE_UI_TEXT = /统一认证|研究生选课|开始选课|进入选课系统|登录|认证|选课|课程|查询|搜索|确认|取消|提交|进入|开始|退出|关闭|返回|下一步|确定/g;
+const IDENTIFIER = /^[A-Za-z_$][\w$-]{0,79}$/;
+const SENSITIVE_NAME = /password|passwd|cookie|authorization|student(?:id|number)?|user(?:id|number)?|token|ticket|captcha|verifycode/i;
+
+function boundedUnique(values, limit) {
+  return [...new Set((Array.isArray(values) ? values : []).map(value => String(value || '').trim()).filter(Boolean))].slice(0, limit);
+}
+
+function scrubDiagnosticText(value, limit) {
+  return String(value || '')
+    .replace(/[\w.+-]+@[\w.-]+/g, '[redacted]')
+    .replace(/\b\d{5,}\b/g, '[redacted]')
+    .replace(/\b(?:token|ticket|code|authorization)\s*[:=]\s*\S+/ig, '$1=[redacted]')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, limit);
+}
+
+function safeUiTextHint(value, limit) {
+  const matches = String(value || '').match(SAFE_UI_TEXT) || [];
+  return boundedUnique(matches, 12).join(' · ').slice(0, limit);
+}
+
+function safeDiagnosticIdentifier(value) {
+  const text = String(value || '');
+  return IDENTIFIER.test(text) && !SENSITIVE_NAME.test(text) && !/\d{5,}/.test(text);
+}
+
+function sanitizeDiagnosticUrl(value) {
+  try {
+    const url = new URL(String(value || ''));
+    const segments = url.pathname.split('/').map(segment =>
+      segment.length > 80 || /\d{5,}/.test(segment) || SENSITIVE_NAME.test(segment) ? '[redacted]' : segment,
+    );
+    return `${url.protocol}//${url.host}${segments.join('/')}`;
+  } catch (_) {
+    return '';
+  }
+}
+
+function sanitizeGraduatePageDiagnostic(raw = {}) {
+  const sanitizeControl = control => ({
+    tag: ['button', 'a'].includes(String(control?.tag || '').toLowerCase()) ? String(control.tag).toLowerCase() : 'unknown',
+    id: safeDiagnosticIdentifier(control?.id) ? String(control.id) : '',
+    classes: boundedUnique(control?.classes, 12).filter(safeDiagnosticIdentifier),
+    textHint: safeUiTextHint(control?.text ?? control?.textHint, 40),
+  });
+  return {
+    timestamp: nowIso(),
+    url: sanitizeDiagnosticUrl(raw.url),
+    title: safeUiTextHint(scrubDiagnosticText(raw.title, 120), 120),
+    frames: boundedUnique((Array.isArray(raw.frames) ? raw.frames : []).map(sanitizeDiagnosticUrl), 20),
+    ids: boundedUnique(raw.ids, 120).filter(safeDiagnosticIdentifier),
+    classes: boundedUnique(raw.classes, 160).filter(safeDiagnosticIdentifier),
+    controls: (Array.isArray(raw.controls) ? raw.controls : []).slice(0, 80).map(sanitizeControl),
+    formActions: boundedUnique((Array.isArray(raw.formActions) ? raw.formActions : []).map(sanitizeDiagnosticUrl), 30),
+    scriptPaths: boundedUnique((Array.isArray(raw.scriptPaths) ? raw.scriptPaths : []).map(sanitizeDiagnosticUrl), 80),
+    functionNames: boundedUnique(raw.functionNames, 80).filter(safeDiagnosticIdentifier),
+    network: (Array.isArray(raw.network) ? raw.network : []).slice(-50).map(item => ({
+      method: /^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)$/i.test(String(item?.method || '')) ? String(item.method).toUpperCase() : 'UNKNOWN',
+      pathname: (() => { try { return new URL(sanitizeDiagnosticUrl(new URL(String(item?.url || ''), 'https://yjsxk.jnu.edu.cn').href)).pathname; } catch (_) { return '/'; } })(),
+      resourceType: ['xhr', 'fetch'].includes(item?.resourceType) ? item.resourceType : 'unknown',
+      status: Number.isInteger(item?.status) ? item.status : null,
+    })),
+  };
+}
+
+function graduateUnsupportedError(capability) {
+  const error = new Error(capability === 'rush'
+    ? '研究生系统抢课流程尚未完成真实页面适配'
+    : '研究生系统课程搜索尚未完成真实页面适配');
+  error.code = 'graduate_unadapted';
+  return error;
+}
 
 function nowIso() {
   return new Date().toISOString();
@@ -163,6 +246,8 @@ const DIAGNOSTIC_CATALOG = {
   rush_preheated: ['ok', '抢课预热', '教学班已预热', '到达设定时间后将跳过搜索，直接调用学校页面的选课逻辑。'],
   auth_recovering: ['warn', '登录状态', '正在恢复登录', '程序正在自动点击登录入口或“开始选课”。'],
   auth_manual: ['warn', '人工认证', '需要你完成认证', '请在受控浏览器中完成账号、验证码或短信验证，完成后程序自动继续。'],
+  graduate_page_unknown: ['warn', '页面适配', '已进入研究生选课域名，但当前页面尚未适配', '请复制脱敏诊断信息并提交给维护者；当前不会搜索或提交课程。'],
+  graduate_unadapted: ['warn', '页面适配', '研究生选课功能尚未完成真实页面适配', '当前不会监控或提交课程；请先提供研究生账号环境下生成的脱敏诊断信息。'],
   access_denied: ['error', '学校系统', '当前账号未获得选课系统访问授权', '请用同一账号手动打开暨大选课官网；若仍显示该提示，请确认选课批次或联系教务部门开通权限。'],
   site_network: ['error', '学校网站/网络', '学校网站暂时无法访问', '检查网络、VPN 和学校网站；程序会降低频率后重试。'],
   page_changed: ['error', '页面适配', '无法识别选课页面', '学校页面结构可能更新，请停止任务并提交脱敏诊断信息。'],
@@ -194,6 +279,9 @@ function classifyError(error) {
   if (/无法进入全校课程页面|locator|selector|找不到.*页面|页面结构/i.test(message)) {
     return makeDiagnostic('page_changed', message);
   }
+  if (error?.code === 'graduate_unadapted' || /研究生系统.*尚未完成真实页面适配/.test(message)) {
+    return makeDiagnostic('graduate_unadapted', message);
+  }
   if (/验证码|短信|人工登录|账号|认证/i.test(message)) return makeDiagnostic('auth_manual', message);
   if (/冲突|不可选|已满|超过|失败|拒绝|学分|上限|重复|限制|不能|无法选择/i.test(message)) {
     return makeDiagnostic('site_rejected', message);
@@ -217,6 +305,7 @@ class CourseAgent {
     this.entryWarmupAttempts = new Map();
     this.selectionGeneration = 0;
     this.selectionReady = false;
+    this.graduateNetwork = [];
     this.runtime = {
       running: false,
       browser: 'closed',
@@ -227,6 +316,7 @@ class CourseAgent {
       currentCourseId: null,
       lastCheckAt: null,
       message: '尚未启动',
+      pageDiagnostic: null,
       diagnostic: makeDiagnostic('idle'),
     };
   }
@@ -236,11 +326,148 @@ class CourseAgent {
   }
 
   portalConfig() {
-    return PORTALS[this.store.state.settings.portal] || PORTALS.standard;
+    const portalId = this.store.state.settings.portal === 'freshman' ? 'graduate' : this.store.state.settings.portal;
+    return PORTALS[portalId] || PORTALS.standard;
+  }
+
+  portalAdapter() {
+    if (this.portalConfig().id === 'graduate') {
+      return {
+        id: 'graduate',
+        verified: false,
+        capabilities: { detectSelectionPage: true, enterSelection: true, searchCourse: true, watch: true, rush: true, fastEnrollment: true },
+        // yjsxk 与 jwxk 使用相似的 xsxkapp 路径，先复用已验证流程做尽力兼容；
+        // adapter 仍保持独立，未来拿到真实诊断后可逐项替换，不影响 standard。
+        detectSelectionPage: page => this.adoptStandardSelectionPage(page),
+        enterSelectionIfNeeded: () => this.enterStandardSelectionIfNeeded(),
+        searchCourse: course => this.searchStandardCourse(course),
+        attemptEnrollment: (course, result) => this.attemptStandardEnrollment(course, result),
+        preheatRush: (course, phase) => this.preheatStandardRushCourse(course, phase),
+        attemptFastEnrollment: (course, warmup) => this.attemptStandardFastEnrollment(course, warmup),
+      };
+    }
+    return {
+      id: 'standard',
+      verified: true,
+      capabilities: { detectSelectionPage: true, enterSelection: true, searchCourse: true, watch: true, rush: true, fastEnrollment: true },
+      detectSelectionPage: page => this.adoptStandardSelectionPage(page),
+      enterSelectionIfNeeded: () => this.enterStandardSelectionIfNeeded(),
+      searchCourse: course => this.searchStandardCourse(course),
+      attemptEnrollment: (course, result) => this.attemptStandardEnrollment(course, result),
+      preheatRush: (course, phase) => this.preheatStandardRushCourse(course, phase),
+      attemptFastEnrollment: (course, warmup) => this.attemptStandardFastEnrollment(course, warmup),
+    };
   }
 
   activeProfileDir() {
-    return this.portalConfig().id === 'standard' ? this.profileDir : `${this.profileDir}-${this.portalConfig().id}`;
+    const portal = this.portalConfig();
+    if (portal.id === 'standard') return this.profileDir;
+    const profileDir = `${this.profileDir}-${portal.id}`;
+    const legacyProfileDir = portal.legacyProfileId ? `${this.profileDir}-${portal.legacyProfileId}` : '';
+    return legacyProfileDir && !fs.existsSync(profileDir) && fs.existsSync(legacyProfileDir)
+      ? legacyProfileDir
+      : profileDir;
+  }
+
+  observeGraduateNetwork(response) {
+    if (this.portalConfig().id !== 'graduate') return;
+    try {
+      const request = response.request();
+      const url = new URL(response.url());
+      if (url.hostname !== PORTALS.graduate.hostname || !['xhr', 'fetch'].includes(request.resourceType())) return;
+      const item = {
+        method: request.method(),
+        url: safeUrl(url.href),
+        resourceType: request.resourceType(),
+        status: response.status(),
+      };
+      const key = JSON.stringify(item);
+      this.graduateNetwork = this.graduateNetwork.filter(value => JSON.stringify(value) !== key);
+      this.graduateNetwork.push(item);
+      this.graduateNetwork = this.graduateNetwork.slice(-50);
+    } catch (_) {}
+  }
+
+  async graduateDomainPage() {
+    if (this.portalConfig().id !== 'graduate') return null;
+    const pages = this.context?.pages() || (this.page ? [this.page] : []);
+    for (const candidate of pages.slice().reverse()) {
+      if (candidate.isClosed()) continue;
+      try {
+        if (new URL(candidate.url()).hostname === PORTALS.graduate.hostname) return candidate;
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  async captureGraduatePageDiagnostic(page = this.page) {
+    if (!page || page.isClosed()) return sanitizeGraduatePageDiagnostic({ network: this.graduateNetwork });
+    const raw = await page.evaluate(() => {
+      const list = selector => Array.from(document.querySelectorAll(selector));
+      const absolute = value => { try { return new URL(value, location.href).href; } catch (_) { return ''; } };
+      const controls = list('button, a').slice(0, 80).map(element => ({
+        tag: element.tagName.toLowerCase(),
+        id: element.id || '',
+        classes: Array.from(element.classList || []),
+        text: (element.innerText || element.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80),
+      }));
+      return {
+        url: location.href,
+        title: document.title,
+        frames: list('iframe, frame').map(element => absolute(element.src)),
+        ids: list('[id]').map(element => element.id),
+        classes: list('[class]').flatMap(element => Array.from(element.classList || [])),
+        controls,
+        formActions: list('form').map(element => absolute(element.action || location.href)),
+        scriptPaths: list('script[src]').map(element => absolute(element.src)),
+        functionNames: Object.entries(Object.getOwnPropertyDescriptors(window))
+          .filter(([name, descriptor]) => /course|select|elective|volunteer|choose/i.test(name) && typeof descriptor.value === 'function')
+          .map(([name]) => name),
+      };
+    }).catch(() => ({ url: page.url(), network: [] }));
+    raw.frames = page.frames().map(frame => frame.url());
+    return sanitizeGraduatePageDiagnostic({ ...raw, network: this.graduateNetwork });
+  }
+
+  async isManualAuthenticationPage() {
+    const pages = this.context?.pages() || (this.page ? [this.page] : []);
+    for (const candidate of pages) {
+      if (candidate.isClosed()) continue;
+      try {
+        const url = new URL(candidate.url());
+        if (/(?:^|\.)(?:auth|cas|sso)[^.]*\./i.test(url.hostname) || /\/(?:auth|cas|sso|login)(?:\/|$)/i.test(url.pathname)) return true;
+      } catch (_) {}
+      for (const frame of candidate.frames()) {
+        const hasCredentialControl = await frame.locator(
+          'input[type="password"], input[name*="captcha" i], input[id*="captcha" i], input[name*="verify" i]',
+        ).count().catch(() => 0);
+        if (hasCredentialControl) return true;
+      }
+    }
+    return false;
+  }
+
+  async reportGraduateUnknown(page) {
+    if (page && page !== this.page) await this.keepOnlyPage(page, '进入研究生选课域名');
+    const pageDiagnostic = await this.captureGraduatePageDiagnostic(page || this.page);
+    const diagnostic = makeDiagnostic('graduate_page_unknown', safeUrl((page || this.page)?.url()), JSON.stringify(pageDiagnostic));
+    for (const course of this.store.state.courses) {
+      if (course.status === 'paused') continue;
+      const error = graduateUnsupportedError(course.mode);
+      const capabilityDiagnostic = makeDiagnostic('graduate_unadapted', error.message);
+      course.status = 'unadapted';
+      course.lastError = error.message;
+      course.lastResult = { checkedAt: nowIso(), message: capabilityDiagnostic.title, diagnostic: capabilityDiagnostic };
+    }
+    if (this.store.state.courses.length) this.store.save();
+    this.updateRuntime({
+      login: 'unknown',
+      page: 'graduate-unadapted',
+      message: diagnostic.title,
+      diagnostic,
+      pageDiagnostic,
+    });
+    return false;
   }
 
   updateRuntime(patch) {
@@ -259,7 +486,7 @@ class CourseAgent {
   async start() {
     if (this.running) return;
     this.running = true;
-    this.updateRuntime({ running: true, message: '正在启动浏览器', diagnostic: makeDiagnostic('starting') });
+    this.updateRuntime({ running: true, message: '正在启动浏览器', pageDiagnostic: null, diagnostic: makeDiagnostic('starting') });
     this.loopPromise = this.runLoop().catch(error => {
       this.log('error', `主循环异常退出: ${error.message}`);
       this.running = false;
@@ -278,7 +505,7 @@ class CourseAgent {
     this.context = null;
     this.page = null;
     if (this.loopPromise) await Promise.race([this.loopPromise, sleep(2_000)]).catch(() => {});
-    this.updateRuntime({ browser: 'closed', browserTabs: 0, login: 'unknown', page: 'unknown', message: '已停止', diagnostic: makeDiagnostic('idle') });
+    this.updateRuntime({ browser: 'closed', browserTabs: 0, login: 'unknown', page: 'unknown', message: '已停止', pageDiagnostic: null, diagnostic: makeDiagnostic('idle') });
   }
 
   findBrowser() {
@@ -399,6 +626,7 @@ class CourseAgent {
         '--proxy-bypass-list=<-loopback>;*.jnu.edu.cn;jnu.edu.cn',
       ],
     });
+    this.context.on('response', response => this.observeGraduateNetwork(response));
     const launchedContext = this.context;
     launchedContext.once('close', () => {
       if (this.context === launchedContext) {
@@ -421,6 +649,7 @@ class CourseAgent {
         page: 'unknown',
         currentCourseId: null,
         message: '受控浏览器已关闭，任务已停止',
+        pageDiagnostic: null,
         diagnostic: makeDiagnostic('stopped_by_browser'),
       });
     });
@@ -438,16 +667,11 @@ class CourseAgent {
           this.updateRuntime({ browserTabs: this.context?.pages().filter(page => !page.isClosed()).length || 0 });
           return;
         }
-        // 统一认证也可能在新标签打开。只有确认是选课系统后才替换主页面，
+        // 统一认证也可能在新标签打开。只有适配器确认是已支持的选课页面后才替换主页面，
         // 避免按“最新标签”误关真正的身份验证页面。
-        for (const frame of candidate.frames()) {
-          const hasApp = await frame.locator(
-            '#cvSplitSchoolCourse, #cvSchoolCourse, #cvRecommendCourse, #aSplitSchoolCourse',
-          ).count().catch(() => 0);
-          if (hasApp) {
-            await this.keepOnlyPage(candidate, '网站打开选课页面');
-            return;
-          }
+        if (await this.portalAdapter().detectSelectionPage(candidate)) {
+          await this.keepOnlyPage(candidate, '网站打开选课页面');
+          return;
         }
         try {
           const hostname = new URL(candidate.url()).hostname;
@@ -467,8 +691,8 @@ class CourseAgent {
     });
   }
 
-  async adoptSelectionPage() {
-    const pages = this.context ? this.context.pages().slice().reverse() : [];
+  async adoptStandardSelectionPage(preferredPage = null) {
+    const pages = preferredPage ? [preferredPage] : (this.context ? this.context.pages().slice().reverse() : []);
     for (const candidate of pages) {
       if (candidate.isClosed()) continue;
       let hasApp = false;
@@ -500,7 +724,7 @@ class CourseAgent {
   }
 
   async isSelectionApp() {
-    return this.adoptSelectionPage();
+    return this.portalAdapter().detectSelectionPage();
   }
 
   markSelectionUnavailable(reason = '') {
@@ -533,6 +757,10 @@ class CourseAgent {
       this.updateRuntime({ login: 'ok', diagnostic: makeDiagnostic('ready') });
       return true;
     }
+    if (portal.id === 'graduate' && this.runtime.page === 'graduate-unadapted') {
+      const currentGraduatePage = await this.graduateDomainPage();
+      if (currentGraduatePage) return this.reportGraduateUnknown(currentGraduatePage);
+    }
 
     this.markSelectionUnavailable('未检测到有效选课页面');
     this.updateRuntime({ login: 'recovering', message: '正在恢复登录', diagnostic: makeDiagnostic('auth_recovering') });
@@ -559,7 +787,10 @@ class CourseAgent {
         this.log('success', '登录状态已恢复');
         return true;
       }
-      if (!announcedManual) {
+      const graduatePage = await this.graduateDomainPage();
+      if (graduatePage) return this.reportGraduateUnknown(graduatePage);
+      const manualAuthentication = portal.id === 'standard' || await this.isManualAuthenticationPage();
+      if (!announcedManual && manualAuthentication) {
         announcedManual = true;
         this.updateRuntime({ login: 'manual', message: '请在浏览器中完成人工登录', diagnostic: makeDiagnostic('auth_manual') });
         this.log('warn', '需要人工登录、验证码或统一认证；完成后将自动继续');
@@ -612,7 +843,11 @@ class CourseAgent {
   }
 
   async enterSelectionIfNeeded() {
-    if (await this.adoptSelectionPage()) return true;
+    return this.portalAdapter().enterSelectionIfNeeded();
+  }
+
+  async enterStandardSelectionIfNeeded() {
+    if (await this.adoptStandardSelectionPage()) return true;
     const clicked = await this.clickFirstVisible([
       frame => frame.locator('#changeCampus'),
       frame => frame.getByRole('button', { name: /^(开始选课|进入选课|进入选课系统|开始选择)$/ }),
@@ -623,7 +858,7 @@ class CourseAgent {
     this.log('info', '已点击开始选课，等待选课页面');
     const deadline = Date.now() + 20_000;
     while (Date.now() < deadline) {
-      if (await this.adoptSelectionPage()) return true;
+      if (await this.adoptStandardSelectionPage()) return true;
       await sleep(500);
     }
     return false;
@@ -671,6 +906,10 @@ class CourseAgent {
   }
 
   async searchCourse(course) {
+    return this.portalAdapter().searchCourse(course);
+  }
+
+  async searchStandardCourse(course) {
     const searchStartedAt = Date.now();
     const pageKind = await this.gotoAllCourses();
     const split = pageKind === 'split';
@@ -731,7 +970,17 @@ class CourseAgent {
         if ([302, 401].includes(refreshSignal.status)) throw new Error(`登录状态失效：学校网站返回 HTTP ${refreshSignal.status}`);
         throw new Error(`课程搜索请求失败，学校网站返回 HTTP ${refreshSignal.status}`);
       }
+      await this.page.waitForFunction(
+        ({ selector, previous }) => document.querySelector(selector)?.innerHTML !== previous,
+        { selector: bodySelector, previous: before },
+        { timeout: 4_000 },
+      ).catch(() => null);
     }
+    const paged = await this.collectStandardCoursePages(course, bodySelector);
+    return { ...paged, durationMs: Date.now() - searchStartedAt };
+  }
+
+  async readStandardCoursePage(course, bodySelector) {
     await this.page.locator(`${bodySelector} .cv-row`).first().waitFor({ state: 'attached', timeout: 4_000 }).catch(() => {});
     await sleep(120);
     const rows = this.page.locator(`${bodySelector} .cv-row`);
@@ -776,7 +1025,75 @@ class CourseAgent {
         }
       }
     }
-    return { matches: results, totalRows: count, durationMs: Date.now() - searchStartedAt };
+    const signature = await this.page.locator(bodySelector).innerHTML().catch(() => '');
+    return { matches: results, totalRows: count, signature: signature.slice(0, 50_000) };
+  }
+
+  async advanceStandardCoursePage(bodySelector, previousSignature) {
+    const candidates = this.page.locator([
+      '[aria-label="下一页"]',
+      '[title="下一页"]',
+      'a[rel="next"]',
+      '.bh-pagination .next',
+      '.pagination .next',
+      '.pager-next',
+      '[class*="pagination"] [class*="next"]',
+      '[class*="pager"] [class*="next"]',
+      '[class*="page-next"]',
+      'a:has-text("下一页")',
+      'button:has-text("下一页")',
+    ].join(', '));
+    const count = Math.min(await candidates.count().catch(() => 0), 20);
+    for (let index = 0; index < count; index++) {
+      let candidate = candidates.nth(index);
+      if (!await candidate.isVisible({ timeout: 200 }).catch(() => false)) continue;
+      const disabled = await candidate.evaluate(element =>
+        element.matches(':disabled, [disabled], [aria-disabled="true"], .disabled, .is-disabled') ||
+        Boolean(element.closest('.disabled, .is-disabled, [aria-disabled="true"]')),
+      ).catch(() => true);
+      if (disabled) continue;
+      const nested = candidate.locator('a, button').first();
+      if (await nested.count().catch(() => 0)) candidate = nested;
+      await candidate.click({ timeout: DEFAULT_TIMEOUT });
+      const changed = await this.page.waitForFunction(
+        ({ selector, previous }) => (document.querySelector(selector)?.innerHTML || '').slice(0, 50_000) !== previous,
+        { selector: bodySelector, previous: previousSignature },
+        { timeout: 5_000 },
+      ).then(() => true).catch(() => false);
+      if (changed) return true;
+    }
+    return false;
+  }
+
+  async collectStandardCoursePages(course, bodySelector) {
+    const matches = [];
+    const signatures = new Set();
+    let totalRows = 0;
+    let pagesScanned = 0;
+    for (let pageNumber = 1; pageNumber <= 50; pageNumber++) {
+      const pageResult = await this.readStandardCoursePage(course, bodySelector);
+      pagesScanned += 1;
+      totalRows += pageResult.totalRows;
+      if (signatures.has(pageResult.signature)) break;
+      signatures.add(pageResult.signature);
+
+      const actionable = pageResult.matches.some(result => {
+        const assessed = assessCourseResult(result);
+        return assessed.alreadySelected || assessed.available;
+      });
+      matches.push(...pageResult.matches);
+      if ((course.teachingClassId && pageResult.matches.length) || (!course.teachingClassId && actionable)) break;
+
+      // 下一页加载后，旧页 Locator 不再可靠；这些记录只用于最终“无可选项”诊断。
+      for (const result of matches) {
+        if (!pageResult.matches.includes(result)) {
+          result.row = null;
+          result.choice = null;
+        }
+      }
+      if (!await this.advanceStandardCoursePage(bodySelector, pageResult.signature)) break;
+    }
+    return { matches, totalRows, pagesScanned };
   }
 
   async confirmDialogs(course, result) {
@@ -810,6 +1127,10 @@ class CourseAgent {
   }
 
   async attemptEnrollment(course, result) {
+    return this.portalAdapter().attemptEnrollment(course, result);
+  }
+
+  async attemptStandardEnrollment(course, result) {
     if (result.hasTest && !this.store.state.settings.autoPickExperiment) {
       return { success: false, manual: true, message: '该课程包含实验班，需要开启“自动选择首个实验班”或人工处理' };
     }
@@ -944,6 +1265,10 @@ class CourseAgent {
   }
 
   async preheatRushCourse(course, phase = 'final') {
+    return this.portalAdapter().preheatRush(course, phase);
+  }
+
+  async preheatStandardRushCourse(course, phase = 'final') {
     course.lastWarmupAttemptAt = Date.now();
     this.updateRuntime({ currentCourseId: course.id, message: `正在预热 ${course.courseNumber} / ${course.teachingClassId}` });
     const search = await this.searchCourse(course);
@@ -960,7 +1285,7 @@ class CourseAgent {
         `预热返回 ${search.totalRows} 行，但没有教学班 ${course.teachingClassId}。`,
       );
       course.status = 'not-found';
-      course.lastResult = { checkedAt: nowIso(), message: '预热未找到教学班', diagnostic, timing: { preheatSearchMs: search.durationMs } };
+      course.lastResult = { checkedAt: nowIso(), message: '预热未找到教学班', diagnostic, timing: { preheatSearchMs: search.durationMs, pagesScanned: search.pagesScanned } };
       this.store.save();
       this.updateRuntime({ diagnostic });
       return false;
@@ -992,11 +1317,11 @@ class CourseAgent {
       matches: [publicMatch],
       message: '预热完成，等待开抢',
       diagnostic: makeDiagnostic('rush_preheated', `${course.courseNumber} / ${course.teachingClassId}`),
-      timing: { preheatSearchMs: search.durationMs },
+      timing: { preheatSearchMs: search.durationMs, pagesScanned: search.pagesScanned },
     };
     this.store.save();
     this.updateRuntime({ diagnostic: course.lastResult.diagnostic, message: `${course.courseNumber} 预热完成` });
-    this.log('success', `${course.courseNumber} / ${course.teachingClassId} 抢课预热完成`, { phase, generation: this.selectionGeneration, searchMs: search.durationMs });
+    this.log('success', `${course.courseNumber} / ${course.teachingClassId} 抢课预热完成`, { phase, generation: this.selectionGeneration, searchMs: search.durationMs, pagesScanned: search.pagesScanned });
     return true;
   }
 
@@ -1045,6 +1370,10 @@ class CourseAgent {
   }
 
   async attemptPreheatedEnrollment(course, warmup) {
+    return this.portalAdapter().attemptFastEnrollment(course, warmup);
+  }
+
+  async attemptStandardFastEnrollment(course, warmup) {
     const startedAt = Date.now();
     if (!this.store.state.settings.autoConfirm) {
       return { success: false, manual: true, message: '自动确认已关闭，抢课直选未提交', durationMs: 0 };
@@ -1180,7 +1509,7 @@ class CourseAgent {
         'course_not_found',
         `课程列表返回 ${search.totalRows} 行，但没有匹配 ${course.courseNumber}${course.teachingClassId ? ` / ${course.teachingClassId}` : ''}。`,
       );
-      course.lastResult = { checkedAt: nowIso(), message: diagnostic.title, diagnostic, timing: { searchMs: search.durationMs } };
+      course.lastResult = { checkedAt: nowIso(), message: diagnostic.title, diagnostic, timing: { searchMs: search.durationMs, pagesScanned: search.pagesScanned } };
       this.scheduleNext(course, false);
       this.store.save();
       this.updateRuntime({ diagnostic });
@@ -1204,7 +1533,7 @@ class CourseAgent {
         JSON.stringify(publicMatches),
       );
       course.status = 'error';
-      course.lastResult = { checkedAt: nowIso(), matches: publicMatches, message: diagnostic.title, diagnostic, timing: { searchMs: search.durationMs } };
+      course.lastResult = { checkedAt: nowIso(), matches: publicMatches, message: diagnostic.title, diagnostic, timing: { searchMs: search.durationMs, pagesScanned: search.pagesScanned } };
       this.scheduleNext(course, true);
       this.store.save();
       this.updateRuntime({ diagnostic });
@@ -1226,7 +1555,7 @@ class CourseAgent {
       matches: publicMatches,
       message: diagnostic.title,
       diagnostic,
-      timing: { searchMs: search.durationMs },
+      timing: { searchMs: search.durationMs, pagesScanned: search.pagesScanned },
     };
     this.store.save();
     this.updateRuntime({ diagnostic });
@@ -1402,4 +1731,8 @@ module.exports = {
   isAccessDeniedMessage,
   executableFromOpenCommand,
   isChromiumExecutable,
+  PORTALS,
+  safeUrl,
+  sanitizeGraduatePageDiagnostic,
+  graduateUnsupportedError,
 };

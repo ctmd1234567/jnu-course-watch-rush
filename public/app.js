@@ -101,6 +101,7 @@ function renderDiagnostic(runtime, courses) {
       lastCheckAt: runtime.lastCheckAt,
       message: runtime.message,
     },
+    pageDiagnostic: runtime.pageDiagnostic || null,
     courses: courses.map(course => ({
       courseNumber: course.courseNumber,
       teachingClassId: course.teachingClassId,

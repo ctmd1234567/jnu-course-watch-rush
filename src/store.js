@@ -14,6 +14,10 @@ const DEFAULT_STATE = {
   completed: [],
 };
 
+function normalizePortalId(portal) {
+  return portal === 'freshman' ? 'graduate' : portal;
+}
+
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
@@ -31,7 +35,9 @@ class Store {
       const savedSettings = saved.settings || {};
       this.state = {
         settings: {
-          portal: ['standard', 'freshman'].includes(savedSettings.portal) ? savedSettings.portal : DEFAULT_STATE.settings.portal,
+          portal: ['standard', 'graduate'].includes(normalizePortalId(savedSettings.portal))
+            ? normalizePortalId(savedSettings.portal)
+            : DEFAULT_STATE.settings.portal,
           watchMinSeconds: savedSettings.watchMinSeconds ?? DEFAULT_STATE.settings.watchMinSeconds,
           watchMaxSeconds: savedSettings.watchMaxSeconds ?? DEFAULT_STATE.settings.watchMaxSeconds,
           rushActionGapMs: Math.max(0, Number(savedSettings.rushActionGapMs) || 0),

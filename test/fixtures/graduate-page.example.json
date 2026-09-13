@@ -1,0 +1,20 @@
+{
+  "timestamp": "2000-01-01T00:00:00.000Z",
+  "url": "https://yjsxk.jnu.edu.cn/example/path",
+  "title": "示例研究生选课页面",
+  "frames": [],
+  "ids": ["exampleCoursePanel"],
+  "classes": ["example-course-list"],
+  "controls": [
+    {
+      "tag": "button",
+      "id": "exampleSearchButton",
+      "classes": ["example-primary"],
+      "textHint": "查询课程"
+    }
+  ],
+  "formActions": [],
+  "scriptPaths": ["https://yjsxk.jnu.edu.cn/example/app.js"],
+  "functionNames": [],
+  "network": []
+}
