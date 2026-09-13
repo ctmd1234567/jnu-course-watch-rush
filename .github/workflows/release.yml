@@ -43,6 +43,7 @@ jobs:
           } else {
             "exists=false" >> $env:GITHUB_OUTPUT
           }
+          exit 0
 
       - name: Install dependencies
         if: steps.existing.outputs.exists != 'true'
