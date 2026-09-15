@@ -1447,12 +1447,17 @@ class CourseAgent {
       this.haltForCreditLimit(course, attempt.message, attempt.evidence);
       return;
     }
+    const full = /已满|人数已满|容量已满|没有余量|无余量/.test(attempt.message);
     const classified = classifyError(new Error(attempt.message));
-    course.status = attempt.manual ? 'manual' : 'error';
+    course.status = full ? 'full' : attempt.manual ? 'manual' : 'error';
     course.lastError = attempt.message;
     course.lastResult.message = attempt.message;
     course.lastResult.attemptEvidence = attempt.evidence || [];
-    course.lastResult.diagnostic = makeDiagnostic(classified.code, attempt.message, JSON.stringify(attempt.evidence || []));
+    course.lastResult.diagnostic = makeDiagnostic(
+      full ? 'course_full' : classified.code,
+      attempt.message,
+      JSON.stringify(attempt.evidence || []),
+    );
     if (attempt.evidence?.some(item => item.code === '302')) {
       this.markSelectionUnavailable('学校返回 Session 失效代码 302');
       this.updateRuntime({ login: 'unknown' });
@@ -1651,6 +1656,9 @@ class CourseAgent {
           if (course.mode === 'rush' && course.startAt && new Date(course.startAt).getTime() > Date.now()) {
             course.status = this.rushWarmups.has(course.id) ? 'preheated' : 'scheduled';
             course.nextCheckAt = new Date(course.startAt).getTime();
+          } else if (course.mode === 'rush' && course.nextCheckAt > Date.now()) {
+            // 抢课一旦到点就始终处于立即可执行状态，不继承旧版本或异常状态留下的倒计间隔。
+            course.nextCheckAt = Date.now();
           }
         }
         const due = active

@@ -108,6 +108,45 @@ test('rush task has no artificial next-round wait after start time', () => {
   assert.ok(course.nextCheckAt >= before && course.nextCheckAt <= Date.now());
 });
 
+test('full rush result stays queued for an immediate retry', async () => {
+  const course = {
+    id: 'rush-full',
+    mode: 'rush',
+    courseNumber: '08060169',
+    teachingClassId: '2627100562',
+    startAt: new Date(Date.now() - 1_000).toISOString(),
+    status: 'checking',
+    lastResult: { timing: {} },
+  };
+  const store = {
+    state: { settings: { autoConfirm: true, rushActionGapMs: 0 }, courses: [course], completed: [] },
+    snapshot: () => ({ settings: {}, courses: [course], completed: [] }),
+    save: () => {},
+  };
+  const agent = new CourseAgent({ store, profileDir: '', emit: () => {} });
+  agent.page = { isClosed: () => false };
+  agent.selectionGeneration = 1;
+  agent.rushWarmups.set(course.id, {
+    page: agent.page,
+    generation: 1,
+    result: { courseName: '测试课程', teachingClassId: course.teachingClassId },
+  });
+  agent.attemptPreheatedEnrollment = async () => ({
+    success: false,
+    message: '课程人数已满',
+    evidence: [{ code: '-1', message: '课程人数已满' }],
+    durationMs: 12,
+  });
+
+  const before = Date.now();
+  await agent.checkRushCourse(course);
+
+  assert.equal(store.state.courses.length, 1);
+  assert.equal(course.status, 'full');
+  assert.equal(course.lastResult.diagnostic.code, 'course_full');
+  assert.ok(course.nextCheckAt >= before && course.nextCheckAt <= Date.now());
+});
+
 test('final rush preheat runs once inside the final window for the current session', () => {
   const now = Date.now();
   const page = { isClosed: () => false };
