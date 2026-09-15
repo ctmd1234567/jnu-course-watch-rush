@@ -96,7 +96,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          foreach ($tag in @('v0.2.0', 'v0.3.0', 'v0.4.0')) {
+          foreach ($tag in @('v0.2.0', 'v0.3.0')) {
             gh release delete $tag --repo $env:GITHUB_REPOSITORY --cleanup-tag --yes
             if ($LASTEXITCODE -ne 0) {
               Write-Host "$tag does not exist or was already removed."
